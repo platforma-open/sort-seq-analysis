@@ -1,0 +1,19 @@
+// Workflow entry point for the FACS Bin Analysis block.
+//
+// TODO: the five stages of workflow-structure@1.2 —
+//   1. resolve the inputs against the abundance anchor
+//   2. export the reads and variants tables
+//   3. write the parameter document
+//   4. invoke the score entrypoint once
+//   5. construct one PColumn per file the manifest names
+// The template must not apply the read floor, must not relate conditions, and must
+// not decide which columns exist — the manifest does.
+
+wf := import("@platforma-sdk/workflow-tengo:workflow")
+
+wf.body(func(args) {
+  return {
+    outputs: {},
+    exports: {}
+  }
+})
