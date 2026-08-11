@@ -1,0 +1,41 @@
+[project]
+name = "facs-bin-analysis-score"
+version = "0.0.0"
+requires-python = ">=3.12.0, <3.13"
+# Runtime dependencies — single source of truth. These exact pins are exported to
+# src/requirements.txt (top-level only) via `pnpm deps:export`, which is what the package
+# builder reads and what the runenv installs offline.
+#
+# requirements.txt is a SELECTOR over the wheels the runenv already ships, not a sourcer:
+# pip runs with --find-links at the runenv's packages and --no-index, so there is no PyPI
+# at install time. A package the runenv does not bundle cannot be added by editing that
+# file — it needs a different runenv variant. Keep these versions aligned with what
+# 3.12.10-scientific-slim carries.
+dependencies = [
+    "polars-lts-cpu==1.33.1",
+]
+
+[dependency-groups]
+# Dev-only tooling, not shipped. Runtime libs live in [project.dependencies] above.
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.14",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py312"
+exclude = ["node_modules", "dist", ".venv", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "E501", "F", "I"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

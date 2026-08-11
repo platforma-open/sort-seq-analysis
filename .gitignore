@@ -11,3 +11,12 @@ software/**/*.tgz
 .DS_Store
 .vscode/sftp.json
 test-dry-run.json
+
+# Python — the software package. Not written by `block-tools structure`; re-add these if a
+# structure refresh drops them. Without them `__pycache__` gets committed, which has
+# already happened in blocks/titeseq-analysis.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/

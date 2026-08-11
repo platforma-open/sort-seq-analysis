@@ -41,7 +41,7 @@
       "ui": "@platforma-open/milaboratories.sort-seq-analysis.ui/dist"
     },
     "meta": {
-      "title": "FACS Bin Analysis",
+      "title": "FACS Analysis",
       "logo": "file:logos/block-logo.png",
       "url": "https://github.com/platforma-open/sort-seq-analysis",
       "support": "mailto:support@milaboratories.com",

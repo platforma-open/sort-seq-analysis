@@ -1,19 +1,229 @@
-// Workflow entry point for the FACS Bin Analysis block.
+// Entry template for the FACS Analysis block.
 //
-// TODO: the five stages of workflow-structure@1.2 —
-//   1. resolve the inputs against the abundance anchor
-//   2. export the reads and variants tables
-//   3. write the parameter document
-//   4. invoke the score entrypoint once
-//   5. construct one PColumn per file the manifest names
-// The template must not apply the read floor, must not relate conditions, and must
-// not decide which columns exist — the manifest does.
+// Five stages, per `workflow-structure`:
+//   1. resolve the inputs against the abundance anchor              (wf.prepare)
+//   2. export the reads and variants tables                         (body)
+//   3. write the parameter document                                 (body)
+//   4. invoke the score entrypoint once                             (body)
+//   5. construct one PColumn per file the manifest names            (build-columns.tpl)
+//
+// Stage 5 lives in a child template because it cannot be done here: the columns to build,
+// and the condition / reference mode / correction mode each declares, are known only once
+// the entrypoint has run and written its manifest. A template body has finished
+// constructing its graph before the tool executes, so branching on the manifest inline is
+// not possible — the child takes the manifest as an input and the platform runs it after.
+//
+// THREE THINGS THIS TEMPLATE MUST NOT DO (`workflow-structure`):
+//   * It must not apply the read floor — not here, not in the reads export. The floor
+//     belongs inside the computation, after per-gate depths are taken. A floor-filtered
+//     export is the natural thing to write and it silently takes every depth over the
+//     surviving set, which makes two runs at two floor settings incomparable.
+//   * It must not pair, order or relate conditions. Each is scored independently.
+//   * It must not decide which columns exist, nor what they declare about themselves.
+//     The manifest names every column to build and supplies every value it declares.
 
 wf := import("@platforma-sdk/workflow-tengo:workflow")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+render := import("@platforma-sdk/workflow-tengo:render")
+canonical := import("@platforma-sdk/workflow-tengo:canonical")
+
+scoreSw := assets.importSoftware("@platforma-open/milaboratories.sort-seq-analysis.software:main")
+buildColumnsTpl := assets.importTemplate(":build-columns")
+
+// Headers the computation reads. They are its side of `computation-interface`, so they are
+// fixed here and in software/src/constants.py together.
+READS_FILE := "reads.tsv"
+VARIANTS_FILE := "variants.tsv"
+PARAMS_FILE := "params.json"
+MANIFEST_FILE := "manifest.json"
+SORT_FRACTION_HEADER := "sortFraction"
+
+// The entrypoint writes one file per quantity per condition and one distribution file per
+// condition, and the caller cannot name them up front — it does not know which conditions
+// survive exclusion, nor where binScore is produced. So they are collected as file sets by
+// pattern, and the manifest says which is which.
+SCORE_FILE_REGEX := "^score_.*\\.tsv$"
+DISTRIBUTION_FILE_REGEX := "^dist_.*\\.tsv$"
+
+wf.prepare(func(args) {
+	bb := wf.createPBundleBuilder()
+	bb.ignoreMissingDomains()
+
+	// The abundance column is the anchor: the user picks exactly one input directly, and
+	// every other input resolves against it. Located independently, a user could select an
+	// abundance column from one run and a condition column from another and nothing would
+	// notice — the mismatch would surface as an empty join or, worse, a partial one.
+	// The anchor MUST be named "main". The model builds the metadata pickers with
+	// getCanonicalOptions({ main: anchor }, ...), so every anchored id it stores embeds
+	// `{"anchor":"main"}` — and resolving one against a bundle whose anchor is registered
+	// under any other name fails with "Cannot resolve anchored axis: anchor 'main' not found".
+	// The name is part of the id's contract, not a local label.
+	bb.addAnchor("main", args.abundanceRef)
+
+	// The three metadata roles. One predicate, one option list, three independent picks —
+	// a spec predicate can establish that a column *is* per-sample metadata but not which
+	// role it plays, because the only per-column discriminator is a value from the user's
+	// own data. So the model offers the list and the user assigns the roles.
+	bb.addSingle(args.conditionColumnRef, "condition")
+	bb.addSingle(args.gateColumnRef, "gate")
+	if !is_undefined(args.sortFractionColumnRef) {
+		bb.addSingle(args.sortFractionColumnRef, "sortFraction")
+	}
+
+	// The variants' mutation count, located by predicate rather than picked. All three
+	// clauses are required: the profiler emits another per-variant total on the same axis,
+	// so the axis alone selects more than one, and it emits the count at two alphabet
+	// grains. At the nucleotide grain a library of synonymous barcodes for one wild type
+	// yields several zero-count rows, which reads as the parent being *unidentifiable* — so
+	// a correctly-parented run would emit the cancelled form.
+	//
+	// Matched as a column, never as the mutation-count *axis* of the same name; the profiler
+	// emits both and only the column reaches the result pool.
+	//
+	// addMulti rather than addSingle because this predicate is allowed to resolve to
+	// nothing, and because more than one match is treated as no answer — see the body.
+	bb.addMulti({
+		axes: [{ anchor: "main", idx: 1 }],
+		name: "pl7.app/repertoire/mutationCount",
+		domain: { "pl7.app/alphabet": "aminoacid" }
+	}, "mutationCount")
+
+	// Everything in this bundle is awaited fully — spec and data — before the body runs,
+	// which delays this block's own spec emission. That is unavoidable here: the body's job
+	// is to export these columns' values as tables, so it genuinely consumes the data.
+	return { columns: bb.build() }
+})
 
 wf.body(func(args) {
-  return {
-    outputs: {},
-    exports: {}
-  }
+	blockId := wf.blockId().getDataAsJson()
+	columns := args.columns
+
+	abundanceSpec := columns.getSpec("main")
+	sampleAxisSpec := abundanceSpec.axesSpec[0]
+	variantAxisSpec := abundanceSpec.axesSpec[1]
+
+	hasSortFraction := !is_undefined(args.sortFractionColumnRef)
+
+	// "Where it resolves to more than one, the block treats that as no answer and selects
+	// none" — it does not take the first and it does not rank. Any tie-break would be this
+	// block's invention, and a first-match rule would pick by result ordering, which is
+	// exactly the inference `input-defaults` rules out.
+	mutationCountColumns := columns.getColumns("mutationCount")
+	hasMutationCount := !is_undefined(mutationCountColumns) && len(mutationCountColumns) == 1
+
+	//////// Stage 2: two tables, because the inputs sit on two grains ////////
+
+	// The builder joins its columns on their shared axes, so abundance ([sample][variant])
+	// plus condition and gate ([sample]) gives one row per (sample, variant) with the
+	// metadata aligned.
+	readsBuilder := pframes.tsvFileBuilder()
+	readsBuilder.setAxisHeader(sampleAxisSpec.name, "sampleId")
+	readsBuilder.setAxisHeader(variantAxisSpec.name, "variantKey")
+	readsBuilder.add(columns.getColumn("main"), { header: "reads" })
+	readsBuilder.add(columns.getColumn("condition"), { header: "condition" })
+	readsBuilder.add(columns.getColumn("gate"), { header: "gate" })
+	if hasSortFraction {
+		readsBuilder.add(columns.getColumn("sortFraction"), { header: SORT_FRACTION_HEADER })
+	}
+	readsBuilder.mem("16GiB")
+	readsBuilder.cpu(1)
+	readsTsv := readsBuilder.build()
+
+	// A second table rather than a column on the first, because the mutation count is per
+	// variant: carried in the reads table it would repeat once per sample, and — the real
+	// cost — its *absence* would be a null column rather than a missing table. A missing
+	// table says "no mutation count anywhere"; a nullable column asks every reader to tell
+	// that from "none for this variant".
+	variantsTsv := undefined
+	if hasMutationCount {
+		variantsBuilder := pframes.tsvFileBuilder()
+		variantsBuilder.setAxisHeader(variantAxisSpec.name, "variantKey")
+		variantsBuilder.add(mutationCountColumns[0], { header: "mutationCount" })
+		variantsBuilder.mem("8GiB")
+		variantsBuilder.cpu(1)
+		variantsTsv = variantsBuilder.build()
+	}
+
+	//////// Stage 3: the parameter document ////////
+
+	// Optional fields are omitted rather than set to a null literal, and the computation
+	// reads an absent key as the stated absence behaviour: no floor applied, correction not
+	// applied. Both are answers `input-defaults` states, not unset configuration.
+	paramsPayload := {
+		gateRanks: args.gateRanks,
+		excludedConditions: args.excludedConditions
+	}
+	if !is_undefined(args.readFloor) {
+		paramsPayload.readFloor = args.readFloor
+	}
+	if hasSortFraction {
+		paramsPayload.sortFractionColumn = SORT_FRACTION_HEADER
+	}
+
+	//////// Stage 4: one invocation, covering every condition ////////
+
+	// One call rather than one per condition: nothing outside the arithmetic is
+	// per-condition — parent row, mutation count, parameters and runenv are shared — so
+	// per-condition calls would multiply startup, leave this template merging N manifests,
+	// and make the one-condition case a loop's degenerate iteration.
+	execBuilder := exec.builder().
+		software(scoreSw).
+		mem("16GiB").
+		cpu(4).
+		writeFile(PARAMS_FILE, canonical.encode(paramsPayload)).
+		addFile(READS_FILE, readsTsv).
+		arg("--reads").arg(READS_FILE).
+		arg("--params").arg(PARAMS_FILE).
+		arg("--out-dir").arg(".").
+		saveFileSet("scoreFiles", SCORE_FILE_REGEX).
+		saveFileSet("distributionFiles", DISTRIBUTION_FILE_REGEX).
+		saveFileContent(MANIFEST_FILE).
+		saveStdoutStream()
+
+	if hasMutationCount {
+		execBuilder.addFile(VARIANTS_FILE, variantsTsv)
+		execBuilder.arg("--variants").arg(VARIANTS_FILE)
+	}
+
+	score := execBuilder.run()
+
+	//////// Stage 5: construct the columns the manifest names ////////
+
+	// Ephemeral, and it has to be: the child reads the manifest's *value*, which needs
+	// `awaitState`, and awaitState is allowed only in ephemeral templates. The cost is bounded
+	// — only this step opts out of cross-project dedup. Everything expensive above it (the
+	// table exports and the entrypoint invocation) stays pure and still dedups, and this step
+	// is spec construction over a handful of files.
+	built := render.createEphemeral(buildColumnsTpl, {
+		manifest: score.getFileContent(MANIFEST_FILE),
+		scoreFiles: score.getFileSet("scoreFiles"),
+		distributionFiles: score.getFileSet("distributionFiles"),
+		variantAxisSpec: variantAxisSpec,
+		abundanceSpec: abundanceSpec,
+		blockId: blockId
+	})
+
+	return {
+		outputs: {
+			// The distribution columns go to a graph frame the read-distribution view reads,
+			// and to neither exports nor the pool. A pool column is a contract: the consumers
+			// that exist read the two scored columns, and a published diagnostic becomes
+			// something a later block may depend on — while v2 chooses a certainty statistic
+			// over this same distribution and needs its form still open.
+			// The scored columns as a frame this block's own table reads. They also go to
+			// exports below — same resources, one import, two destinations.
+			scoresPf: built.output("scoresPfForUi"),
+			distributionPf: built.output("distributionPf"),
+			// Returned as an output of its own so what it reports about the run is readable
+			// without reconstructing it from the columns.
+			manifest: score.getFileContent(MANIFEST_FILE),
+			logHandle: score.getStdoutStream()
+		},
+		exports: {
+			// The two scored columns, and those stay the whole of what another block consumes.
+			pf: built.output("scoresPf")
+		}
+	}
 })
