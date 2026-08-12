@@ -71,7 +71,7 @@ self.body(func(inputs) {
 	trace := pSpec.makeTrace(inputs.abundanceSpec, {
 		type: "milaboratories.sort-seq-analysis",
 		importance: 30,
-		label: "FACS Analysis"
+		label: "Sort-Seq Analysis"
 	})
 
 	scoreEntries := {}

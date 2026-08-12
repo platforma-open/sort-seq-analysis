@@ -1,12 +1,12 @@
 ---
-'@platforma-open/milaboratories.sort-seq-analysis.software': minor
-'@platforma-open/milaboratories.sort-seq-analysis.workflow': minor
-'@platforma-open/milaboratories.sort-seq-analysis.model': minor
-'@platforma-open/milaboratories.sort-seq-analysis.ui': minor
-'@platforma-open/milaboratories.sort-seq-analysis': minor
+'@platforma-open/milaboratories.sort-seq-analysis.software': patch
+'@platforma-open/milaboratories.sort-seq-analysis.workflow': patch
+'@platforma-open/milaboratories.sort-seq-analysis.model': patch
+'@platforma-open/milaboratories.sort-seq-analysis.ui': patch
+'@platforma-open/milaboratories.sort-seq-analysis.block': patch
 ---
 
-FACS analysis — first implementation.
+Sort-Seq Analysis — first implementation.
 
 Scores protein variants from a sort-seq (FACS bin) experiment. Per condition the block emits the
 read-weighted mean of the gate ranks each variant sorted into (`pl7.app/facsBin/gateRankMean`) and that

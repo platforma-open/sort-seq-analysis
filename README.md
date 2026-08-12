@@ -1,6 +1,6 @@
 # sort-seq-analysis
 
-**FACS Analysis** — a Platforma block that scores protein variants from a sort-seq (FACS bin)
+**Sort-Seq Analysis** — a Platforma block that scores protein variants from a sort-seq (FACS bin)
 experiment. Per condition it emits the read-weighted mean of the gate ranks each variant sorted into
 (`pl7.app/facsBin/gateRankMean`) and that value minus the parent's (`pl7.app/facsBin/binScore`).
 

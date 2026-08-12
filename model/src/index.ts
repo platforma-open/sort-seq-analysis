@@ -357,7 +357,7 @@ export const platforma = BlockModelV3.create(blockDataModel)
    * in the subtitle — a title that changes with configuration makes the block list read as
    * several different blocks, and every sibling keeps the title constant for that reason.
    */
-  .title(() => "FACS Bin Analysis")
+  .title(() => "Sort-Seq Analysis")
 
   /** The user's override wins; otherwise the label derived from the gate selection. */
   .subtitle((ctx) => ctx.data.customBlockLabel || deriveBlockLabel(ctx.data))

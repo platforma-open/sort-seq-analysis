@@ -1,4 +1,4 @@
-// Entry template for the FACS Analysis block.
+// Entry template for the Sort-Seq Analysis block.
 //
 // Five stages, per `workflow-structure`:
 //   1. resolve the inputs against the abundance anchor              (wf.prepare)

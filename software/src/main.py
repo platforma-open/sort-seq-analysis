@@ -1,4 +1,4 @@
-"""FACS analysis — the block's score computation.
+"""Sort-seq analysis — the block's score computation.
 
 One binary entrypoint, invoked once per run. Its interface is fixed by
 `computation-interface`:
