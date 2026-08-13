@@ -1,0 +1,257 @@
+// Stage 5 of `workflow-structure`: construct one PColumn per file the manifest names.
+//
+// This is a child template rather than part of the entry body because it must read the
+// manifest's *value*. Which conditions survived, where binScore was produced, in which
+// reference mode, and whether the correction was applied are all decided inside the
+// computation — the entry template's body has finished constructing its graph before the
+// entrypoint runs, so it cannot branch on any of it. Awaiting the manifest as an input is
+// what makes the values readable.
+//
+// It is rendered with `render.createEphemeral`, and that is forced rather than chosen:
+// `awaitState` is allowed only in ephemeral templates. A pure `render.create` fails at run
+// time with "awaitState allowed only in ephemeral templates" — it does not fail to compile,
+// so the template builds clean and the block dies on its first real run.
+//
+// Only this step loses cross-project dedup. The exec above it stays pure, so the expensive
+// work is still recovered; what re-runs is spec construction over a handful of files.
+//
+// EVERY DECLARED VALUE COMES FROM THE MANIFEST, NEVER FROM THE BLOCK'S ARGUMENTS. Deriving
+// `sortYieldCorrected` from "did the user pick a column" is simpler and is rejected: one
+// slip — the column dropped from the reads export while the argument stays set — emits
+// "true" over an uncorrected number. The same argument covers the reference mode, plus a
+// second reason: deriving it would need this template to find the parent row itself.
+//
+// The column specs below are contract text in `emitted-columns` and
+// `read-distribution-emission`. Every key is written as a literal so this file can be read
+// side by side with the spec — and because a Tengo map literal treats a bare identifier as
+// the key itself, so a named constant in key position would emit the constant's *name*.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+strings := import("@platforma-sdk/workflow-tengo:strings")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+
+self.defineOutputs("scoresPf", "scoresPfForUi", "distributionPf")
+
+self.awaitState("manifest", "ResourceReady")
+self.awaitState("scoreFiles", "ResourceReady")
+self.awaitState("distributionFiles", "ResourceReady")
+
+self.body(func(inputs) {
+	// saveFileContent produces a binary value resource rather than a typed JSON one, so the
+	// template unmarshaller hands it over untouched and the decode is ours.
+	manifest := inputs.manifest.getDataAsJson()
+
+	// A file set arrives as a map of file name -> file resource.
+	scoreFiles := inputs.scoreFiles
+	distributionFiles := inputs.distributionFiles
+
+	variantAxisSpec := inputs.variantAxisSpec
+	blockId := inputs.blockId
+
+	// This block's own gate axis. It carries no rank: the ordering is the declared gate
+	// order, applied when the view draws. Its values are the gate column's own distinct
+	// values.
+	gateAxisSpec := {
+		name: "pl7.app/facsBin/gate",
+		type: "String",
+		domain: {
+			"pl7.app/block": blockId
+		},
+		annotations: {
+			"pl7.app/label": "Gate"
+		}
+	}
+
+	// makeTrace bundles the upstream abundance provenance with this block's own step;
+	// trace.inject then rewrites only the small spec resources.
+	trace := pSpec.makeTrace(inputs.abundanceSpec, {
+		type: "milaboratories.sort-seq-analysis",
+		importance: 30,
+		label: "Sort-Seq Analysis"
+	})
+
+	scoreEntries := {}
+	distributionEntries := {}
+
+	// `id` is the frame entry key and must be unique per condition: without it every
+	// condition's import comes back keyed on the bare column name and the second overwrites
+	// the first.
+	importOne := func(file, valueColumn, id, valueSpec, axes) {
+		return xsv.importFile(file, "tsv", {
+			axes: axes,
+			columns: [{ column: valueColumn, id: id, spec: valueSpec }],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		}, { splitDataAndSpec: true, cpu: 1, mem: "8GiB" })
+	}
+
+	collect := func(target, imported) {
+		// Sorted iteration: pFrameBuilder.add() order feeds the frame's resource CID, and
+		// Tengo map iteration is not order-guaranteed — an unsorted loop gives re-renders
+		// different CIDs and a CIDConflictError. maps.getKeys returns sorted keys.
+		for key in maps.getKeys(imported) {
+			ll.assert(is_undefined(target[key]), "duplicate pframe entry key: %v", key)
+			target[key] = imported[key]
+		}
+	}
+
+	for entry in manifest.conditions {
+		condition := entry.condition
+
+		// The entry id must be identifier-safe, so special characters are substituted HERE
+		// and only here. The condition *domain value* below is emitted verbatim: it is what a
+		// consumer matches on, and a substituted value would join back to nothing in the
+		// source metadata column. clonotype-enrichment substitutes both, and that second half
+		// is the part not to copy.
+		suffix := strings.substituteSpecialCharacters(condition)
+
+		// Always written, including when false: absence is ambiguous between "uncorrected"
+		// and "produced by a version that did not record it".
+		sortYieldCorrected := entry.sortYieldCorrected ? "true" : "false"
+
+		variantAxes := [{ column: "variantKey", spec: variantAxisSpec }]
+
+		// Both scored columns are per variant, keyed on the profiler's variant axis and
+		// nothing else. A condition is never an axis. The sample axis is not carried: samples
+		// are consumed into gates and conditions.
+		//
+		// The variant axis is propagated verbatim from the abundance column, never
+		// constructed — a hand-built name with a hand-built domain would resolve against the
+		// wrong variant axis on any project that defines it differently.
+		collect(scoreEntries, importOne(
+			scoreFiles[entry.gateRankMeanFile],
+			"gateRankMean",
+			"gateRankMean_" + suffix,
+			{
+				name: "pl7.app/facsBin/gateRankMean",
+				valueType: "Double",
+				domain: {
+					"pl7.app/block": blockId,
+					"pl7.app/facsBin/condition": condition
+				},
+				annotations: {
+					"pl7.app/label": "Gate rank mean (" + condition + ")",
+					"pl7.app/isScore": "true",
+					// "decreasing" is the token meaning higher-is-favourable in the ranking path,
+					// which is the only path these columns reach because they emit no
+					// defaultCutoff. It reads like the opposite; the UI names the option "Highest".
+					"pl7.app/score/rankingOrder": "decreasing",
+					// Header tooltip in the results table. Kept to one plain sentence.
+					"pl7.app/description": "Which gates this variant sorted into on average, weighted by reads — higher means stronger binding, on an uncalibrated scale.",
+					"pl7.app/facsBin/sortYieldCorrected": sortYieldCorrected,
+					"pl7.app/table/visibility": "default",
+					"pl7.app/table/orderPriority": "70100"
+				}
+			},
+			variantAxes
+		))
+
+		// binScore is absent at a condition whose parent went unscored — the manifest says so
+		// with a null file name, and the column is then not built at all rather than built
+		// empty. A present column with no keys would claim every variant was unscorable here.
+		if !is_undefined(entry.binScoreFile) {
+			collect(scoreEntries, importOne(
+				scoreFiles[entry.binScoreFile],
+				"binScore",
+				"binScore_" + suffix,
+				{
+					name: "pl7.app/facsBin/binScore",
+					valueType: "Double",
+					domain: {
+						"pl7.app/block": blockId,
+						"pl7.app/facsBin/condition": condition,
+						// Only binScore carries the reference mode. gateRankMean is mathematically
+						// independent of the parent reference, so a mode on it would claim a
+						// distinction it does not have.
+						"pl7.app/facsBin/referenceMode": entry.referenceMode
+					},
+					annotations: {
+						"pl7.app/label": "Bin score (" + condition + ")",
+						"pl7.app/isScore": "true",
+						"pl7.app/score/rankingOrder": "decreasing",
+						"pl7.app/description": "How much better or worse this variant binds than the parent, in gate steps — zero means it behaves like the parent.",
+						"pl7.app/facsBin/sortYieldCorrected": sortYieldCorrected,
+						"pl7.app/table/visibility": "default",
+						"pl7.app/table/orderPriority": "70200"
+					}
+				},
+				variantAxes
+			))
+		}
+
+		// The read distribution: two Double columns per condition on [variant, gate]. Neither
+		// carries the score annotations, because neither is a score. The condition key is
+		// load-bearing rather than tidy — without it every condition's pair has an identical
+		// spec and one run's columns collide instead of coexisting.
+		distributionAxes := [
+			{ column: "variantKey", spec: variantAxisSpec },
+			{ column: "gate", spec: gateAxisSpec }
+		]
+
+		collect(distributionEntries, importOne(
+			distributionFiles[entry.readDistributionFile],
+			"gateFrequency",
+			"gateFrequency_" + suffix,
+			{
+				name: "pl7.app/facsBin/gateFrequency",
+				valueType: "Double",
+				domain: {
+					"pl7.app/block": blockId,
+					"pl7.app/facsBin/condition": condition
+				},
+				annotations: {
+					"pl7.app/label": "Gate read frequency (" + condition + ")",
+					"pl7.app/table/visibility": "optional"
+				}
+			},
+			distributionAxes
+		))
+
+		// Both quantities travel: the frequency is a shape and the reads say whether to trust
+		// it — a variant with four reads across two gates draws the same profile as one with
+		// four thousand.
+		collect(distributionEntries, importOne(
+			distributionFiles[entry.readDistributionFile],
+			"gateReads",
+			"gateReads_" + suffix,
+			{
+				name: "pl7.app/facsBin/gateReads",
+				valueType: "Double",
+				domain: {
+					"pl7.app/block": blockId,
+					"pl7.app/facsBin/condition": condition
+				},
+				annotations: {
+					"pl7.app/label": "Gate reads (" + condition + ")",
+					"pl7.app/table/visibility": "optional"
+				}
+			},
+			distributionAxes
+		))
+	}
+
+	buildFrame := func(entries) {
+		builder := pframes.pFrameBuilder()
+		for key in maps.getKeys(entries) {
+			value := entries[key]
+			builder.add(key, trace.inject(value.spec), value.data)
+		}
+		return builder.build()
+	}
+
+	// One built frame, two destinations. `scoresPf` is what downstream blocks consume through
+	// exports; `scoresPfForUi` is the same pcolumn resources exported for this block's own
+	// table, which needs them because the result pool cannot tell *this* instance's columns
+	// from another instance of this block's.
+	scores := buildFrame(scoreEntries)
+
+	return {
+		scoresPf: scores,
+		scoresPfForUi: pframes.exportFrame(scores),
+		distributionPf: pframes.exportFrame(buildFrame(distributionEntries))
+	}
+})

@@ -1,0 +1,77 @@
+name: Python Tests
+
+# The score computation's own suite, run on its own rather than through the block.
+# `computation-test-suite`: the arithmetic is where a wrong number comes from, and a
+# block-level assertion cannot see one. This lane needs no backend, no registry and no
+# upstream pipeline, so it stays fast and fails for one reason only.
+
+on:
+  merge_group:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches:
+      - 'main'
+  push:
+    branches:
+      - 'main'
+  workflow_dispatch: {}
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: software
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-dependency-glob: software/pyproject.toml
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run pytest
+        run: uv run pytest
+
+  requirements-sync:
+    # src/requirements.txt is generated from pyproject.toml (the single source of truth)
+    # and is what the package builder installs from. This job fails if the committed file
+    # has drifted — e.g. someone changed a dependency and forgot to regenerate. Fix
+    # locally with `pnpm deps:export` (see software/package.json).
+    #
+    # It matters more here than it looks: requirements.txt is a *selector* over the wheels
+    # the runenv already ships, installed with --no-index. A drifted pin does not fall back
+    # to PyPI — it fails the offline install at block build time.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: software
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-dependency-glob: software/pyproject.toml
+
+      - name: Regenerate requirements.txt from pyproject.toml
+        # The same script `pnpm deps:export` runs locally — single source of truth.
+        run: bash scripts/deps-export.sh
+
+      - name: Verify requirements.txt is in sync with pyproject.toml
+        run: |
+          if ! git diff --exit-code -- src/requirements.txt; then
+            echo ""
+            echo "::error::src/requirements.txt is out of sync with pyproject.toml"
+            echo "Dependencies are defined in software/pyproject.toml; src/requirements.txt is generated."
+            echo "Resolve locally with:"
+            echo "    cd software && pnpm deps:export"
+            echo "then commit the updated src/requirements.txt."
+            exit 1
+          fi
+          echo "src/requirements.txt is in sync with pyproject.toml."
