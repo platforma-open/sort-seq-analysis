@@ -5,7 +5,7 @@ column *values* rather than a picked column reference: whether a set of fraction
 1, and whether two samples share a gate, are properties of the project's data.
 
 Every configuration rule — a required argument absent, an anchor resolving to nothing or
-to more than one column, the three metadata roles not distinct, an incomplete gate order,
+to more than one column, the three metadata roles not distinct, an empty gate order,
 every condition excluded, a negative floor — is refused by the block model before the run
 starts and is deliberately **not** re-checked here. Two implementations of one rule, in
 two languages, either changeable alone, is a rule that will disagree; the failure mode is
@@ -46,7 +46,9 @@ def check_one_sample_per_group(reads: pl.DataFrame, retained_conditions: list[st
     No sample for a pair is **not** an error — that gate was not collected at that
     condition, which clauses 1 and 2 already accommodate.
 
-    Only retained conditions are checked; an excluded value is not part of the run.
+    Only retained conditions are checked; an excluded value is not part of the run. The
+    caller likewise hands over only the selected gates' rows, so two samples sharing a gate
+    the run does not cover pass unremarked — that pair is not a group of this run.
     """
     offenders = (
         reads.filter(pl.col(COL_CONDITION).is_in(retained_conditions))

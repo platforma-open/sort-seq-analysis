@@ -45,10 +45,18 @@ export function settingsIssues(data: BlockData): string[] {
     issues.push("The condition, gate and sort-fraction columns must be three different columns");
   }
 
-  // 4 incomplete — the order must cover exactly the gate column's values. The drag list makes
-  // duplicates and unknown values unrepresentable, so what is left to check is that the
-  // snapshot and the order agree; they can drift if upstream re-emits the column and the user
-  // does not re-pick it.
+  // 4 the order is a **selection**, not a ranking of everything the column carries. The
+  // gates it lists, in the order it lists them, are the run's binding ladder; a gate the
+  // user removed is not part of the run at all, exactly as an excluded condition is not.
+  //
+  // So coverage is deliberately not checked. A gate column carrying values that are not
+  // rungs on this ladder — an unsorted input, a specificity arm, a stability arm — is the
+  // ordinary case for a sort-seq run, and demanding a rank for each would refuse a
+  // configuration the computation runs perfectly well.
+  //
+  // What is left is that the list is not empty, and that it names nothing the column does
+  // not carry; the latter can drift if upstream re-emits the column and the user does not
+  // re-pick it.
   // Only once a gate column is picked. Collecting every issue rather than throwing on the
   // first means an unguarded check here would tell a freshly added block that "the gate column
   // has no values to rank" while also telling it to select a gate column — two complaints for
@@ -56,12 +64,8 @@ export function settingsIssues(data: BlockData): string[] {
   if (data.gateColumnRef !== undefined) {
     if (data.gateValues.length === 0) {
       issues.push("The gate column has no values to rank");
-    }
-    const missing = data.gateValues.filter((value) => !data.gateOrder.includes(value));
-    if (missing.length > 0) {
-      issues.push(
-        `Assign an order position to every gate: ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} missing`,
-      );
+    } else if (data.gateOrder.length === 0) {
+      issues.push("Keep at least one gate in the order — every gate has been removed");
     }
     const unknown = data.gateOrder.filter((value) => !data.gateValues.includes(value));
     if (unknown.length > 0) {
@@ -146,6 +150,11 @@ export const platforma = BlockModelV3.create(blockDataModel)
       // same bytes and does not fire the staleness gate.
       // Position becomes the rank: first in the list is gate 1, the weakest binder. The
       // computation weights by these integers, so the list's order is the whole signal.
+      // Ranks are contiguous over the gates the list actually holds — a removed gate leaves
+      // no gap, because the ladder is the selection and rank values enter the weighted mean
+      // as numbers. A gap would move every score without naming a reason.
+      // The map is also what tells the computation which gates the run covers: a gate absent
+      // from it is dropped along with its samples.
       gateRanks: Object.fromEntries(data.gateOrder.map((gate, index) => [gate, index + 1])),
       excludedConditions: [...data.excludedConditions].sort(),
       // Both optional arguments are passed through as `undefined` when unset rather than

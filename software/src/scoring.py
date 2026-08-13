@@ -153,10 +153,11 @@ def gate_rank_means(per_gate: pl.DataFrame, gate_ranks: dict[str, int]) -> pl.Da
     fraction is never reconstructed.
     """
     # replace_strict raises on a gate value with no rank rather than dropping its reads.
-    # An incomplete gate order is a *configuration* violation the block model refuses
-    # before the run (`argument-surface` rule 4), and `validation-boundary` forbids
-    # checking one rule in two places — so this is not a second check but an internal
-    # invariant, guarding a direct CLI caller against silently losing a gate.
+    # Reaching it is a bug in this package, not a caller error: `gateRanks` names the gates
+    # the run covers, and `pipeline.selected_gates` has already dropped every row outside
+    # that set. So this is an internal invariant — the one place that would notice a future
+    # caller assembling `per_gate` without going through that filter, where the failure
+    # would otherwise be a silently lighter weighted mean.
     rank = pl.col(COL_GATE).replace_strict(gate_ranks, return_dtype=pl.Float64)
 
     return (

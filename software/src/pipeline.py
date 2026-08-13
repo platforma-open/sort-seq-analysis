@@ -37,20 +37,22 @@ from validate import check_one_sample_per_group, check_sort_fractions
 
 def run(reads: pl.DataFrame, variants: pl.DataFrame | None, params: Params, out_dir: Path) -> dict:
     """Score every retained condition and write every file. Returns the manifest."""
-    retained = retained_conditions(reads, params)
+    in_scope = selected_gates(reads, params)
+    retained = retained_conditions(in_scope, params)
 
     # Both refusals run over the whole run before anything is written, so a failure leaves
-    # nothing partial behind.
-    check_one_sample_per_group(reads, retained)
+    # nothing partial behind. Over the in-scope rows only: a second sample in a gate the run
+    # does not cover, or a missing sort fraction on one, is not this run's problem.
+    check_one_sample_per_group(in_scope, retained)
     if params.sort_fraction_column is not None:
-        check_sort_fractions(reads, params.sort_fraction_column, retained)
+        check_sort_fractions(in_scope, params.sort_fraction_column, retained)
 
     parent = scoring.resolve_parent(variants)
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
     conditions = [
-        _score_one_condition(reads, params, parent, condition, index, out_dir)
+        _score_one_condition(in_scope, params, parent, condition, index, out_dir)
         for index, condition in enumerate(retained)
     ]
 
@@ -65,11 +67,37 @@ def run(reads: pl.DataFrame, variants: pl.DataFrame | None, params: Params, out_
     return manifest
 
 
+def selected_gates(reads: pl.DataFrame, params: Params) -> pl.DataFrame:
+    """The rows whose gate is a rung on the declared ladder, and no others.
+
+    `gateRanks` is a **selection**: the caller ranks the gates the run covers and says
+    nothing about the rest. A gate column routinely carries values that are not rungs — an
+    unsorted input, a specificity arm, a stability arm — and their samples take no part in
+    the arithmetic, are not depths, and are not gates a distribution draws.
+
+    Dropping them here, once, rather than at each use is what lets every function downstream
+    keep reading `gate_ranks` as total over the rows it is handed: the `replace_strict` in
+    `scoring.gate_rank_means` and the sort keys in `_gates_collected` and
+    `read_distribution` all become internal invariants guarded by this one filter.
+
+    Filtering **before** the depths are taken is required, not incidental: `depth_cb` sums
+    over a gate's own rows, so an unselected gate cannot change a selected gate's
+    frequencies — but it would otherwise contribute a rank-less term to both sums of the
+    weighted mean, which is precisely the arithmetic clause 2 confines to collected gates.
+    """
+    return reads.filter(pl.col(COL_GATE).is_in(list(params.gate_ranks)))
+
+
 def retained_conditions(reads: pl.DataFrame, params: Params) -> list[str]:
     """The condition column's own distinct values, minus the excluded ones, sorted.
 
     The values are the column's, never a set the caller typed: a typo then becomes a value
     matching no sample rather than a silent second condition.
+
+    Read from the **in-scope** rows, so a condition whose every sample sits in an unselected
+    gate is not a condition of this run — it is dropped exactly as an excluded value is,
+    rather than scored to an empty file. An empty result is indistinguishable from a failed
+    one, and the gate selection is as much a scoping argument as the exclusion list.
 
     Sorting is not an ordering claim — conditions carry none (`condition-source`), and
     nothing this block emits depends on their order. It is here because the sort makes each
@@ -147,6 +175,10 @@ def _gates_collected(slice_c: pl.DataFrame, gate_ranks: dict[str, int]) -> list[
     which clause 1 handles by having it contribute to neither sum. A gate with no sample at
     this condition is simply not collected here, and that is not an error.
 
+    Only selected gates can appear — the slice is already filtered — so the summary reads as
+    the ladder the run actually used, and an unsorted-input or specificity sample never shows
+    up as a rung with a large depth beside the real gates.
+
     Ordered by declared rank, so the run summary reads along the binding axis.
     """
     depths = slice_c.group_by(COL_GATE).agg(pl.col(COL_READS).sum().alias("depth"))
@@ -166,7 +198,10 @@ def _sort_fraction_sum(slice_c: pl.DataFrame, sort_fraction_column: str | None) 
     supplies one fraction per gate.
 
     A sum short of 1.0 is legitimate and is not renormalized: it is what a condition that
-    collected only some of the declared gates correctly looks like.
+    collected only some of the declared gates correctly looks like — and, now that the
+    ladder is a selection, what a run covering only some of a column's gates looks like
+    too. The fractions of unselected gates are not summed in, because those gates supplied
+    nothing the weighted mean used.
     """
     if sort_fraction_column is None:
         return None
