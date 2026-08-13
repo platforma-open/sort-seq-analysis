@@ -1,4 +1,4 @@
-# @platforma-open/milaboratories.sort-seq-analysis.block
+# @platforma-open/milaboratories.sort-seq-analysis.software
 
 ## 1.0.1
 
