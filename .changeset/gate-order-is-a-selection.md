@@ -1,8 +1,8 @@
 ---
-'@platforma-open/milaboratories.sort-seq-analysis.model': minor
-'@platforma-open/milaboratories.sort-seq-analysis.software': minor
-'@platforma-open/milaboratories.sort-seq-analysis.ui': minor
-'@platforma-open/milaboratories.sort-seq-analysis.block': minor
+'@platforma-open/milaboratories.sort-seq-analysis.model': patch
+'@platforma-open/milaboratories.sort-seq-analysis.software': patch
+'@platforma-open/milaboratories.sort-seq-analysis.ui': patch
+'@platforma-open/milaboratories.sort-seq-analysis.block': patch
 ---
 
 Gate order is a selection, not a ranking of every value the gate column carries
