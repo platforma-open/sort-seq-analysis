@@ -1,5 +1,6 @@
 {
   "name": "@platforma-open/milaboratories.sort-seq-analysis.model",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "main": "dist/index.cjs",
