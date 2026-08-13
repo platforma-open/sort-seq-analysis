@@ -4,9 +4,6 @@
 experiment. Per condition it emits the read-weighted mean of the gate ranks each variant sorted into
 (`pl7.app/facsBin/gateRankMean`) and that value minus the parent's (`pl7.app/facsBin/binScore`).
 
-Status: **scaffold only** — canonical structurer layout with stub model, workflow, UI and software.
-No computation is implemented yet.
-
 ## Specification
 
 `docs/text/work/projects/sequence-repertoires/facs-bin-analysis/` in the `docs/text` repo.
