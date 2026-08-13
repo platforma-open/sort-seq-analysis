@@ -1,0 +1,9 @@
+# @platforma-open/milaboratories.sort-seq-analysis.workflow
+
+## 1.0.2
+
+### Patch Changes
+
+- bd2c759: Release fix
+- Updated dependencies [bd2c759]
+  - @platforma-open/milaboratories.sort-seq-analysis.software@1.0.2

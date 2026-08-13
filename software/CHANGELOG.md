@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.sort-seq-analysis.software
 
+## 1.0.2
+
+### Patch Changes
+
+- bd2c759: Release fix
+
 ## 1.0.1
 
 ### Patch Changes
