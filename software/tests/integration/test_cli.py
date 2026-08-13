@@ -155,6 +155,147 @@ def test_condition_value_is_emitted_verbatim(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# The gate ladder is a selection: `gateRanks` names the gates the run covers, and a value
+# of the gate column absent from it takes no part. The gate column of a real sort-seq run
+# routinely carries values that are not rungs — an unsorted input, a specificity arm, a
+# stability arm — and none of them is a misconfiguration.
+# ---------------------------------------------------------------------------
+
+
+# One extra gate, deliberately the heaviest thing in the table: an unsorted input sample
+# with a depth that dwarfs every real gate and a variant spread that inverts the ladder.
+# If any of it reached the arithmetic, no score below would survive.
+INPUT_GATE_ROWS = [
+    ("input", "P", 1),
+    ("input", "A", 999),
+    ("input", "B", 1000),
+    ("input", "C", 1000),
+]
+
+
+def test_an_unselected_gate_changes_no_score(tmp_path):
+    """The whole point: the same reads with and without a gate nobody ranked score identically.
+
+    Depths are taken per gate over that gate's own rows, so an unselected gate cannot move a
+    selected gate's frequencies — what it would otherwise move is the weighted mean, by
+    contributing a rank-less term to both of its sums.
+    """
+    code, out_dir, manifest = invoke(
+        tmp_path,
+        reads_frame(BASE_ROWS + INPUT_GATE_ROWS),
+        variants_frame(BASE_MUTATION_COUNTS),
+    )
+
+    assert code == 0
+    entry = manifest["conditions"][0]
+    assert read_scores(out_dir, entry["gateRankMeanFile"], "gateRankMean") == pytest.approx(BASE_MEANS, rel=REL)
+    # And the run summary reads as the ladder actually used — no rung with a depth of 3000
+    # sitting beside the real gates.
+    assert entry["gatesCollected"] == [
+        {"gate": "g1", "depth": 100},
+        {"gate": "g2", "depth": 100},
+        {"gate": "g3", "depth": 100},
+    ]
+
+
+def test_a_narrowed_ladder_ranks_contiguously_from_one(tmp_path):
+    """Selecting g1 and g2 makes them ranks 1 and 2; g3's reads leave the arithmetic entirely.
+
+    Hand-computed on the base table, where every gate's depth is 100:
+
+        P: freq .10 .20   den .30   num 1(.10)+2(.20) = .50   mean .50/.30
+        A: freq .30 .50   den .80   num 1(.30)+2(.50) = 1.30  mean 1.30/.80 = 1.625
+        B: freq .59 .29   den .88   num 1(.59)+2(.29) = 1.17  mean 1.17/.88
+        C: freq .01 .01   den .02   num 1(.01)+2(.01) = .03   mean 1.5
+
+    Every mean falls in [1, 2] — the range of the ladder the run declared, not of the column.
+    """
+    code, out_dir, manifest = invoke(
+        tmp_path,
+        reads_frame(BASE_ROWS),
+        variants_frame(BASE_MUTATION_COUNTS),
+        gate_ranks={"g1": 1, "g2": 2},
+    )
+
+    assert code == 0
+    entry = manifest["conditions"][0]
+    assert entry["gatesCollected"] == [{"gate": "g1", "depth": 100}, {"gate": "g2", "depth": 100}]
+    assert read_scores(out_dir, entry["gateRankMeanFile"], "gateRankMean") == pytest.approx(
+        {"P": 0.50 / 0.30, "A": 1.625, "B": 1.17 / 0.88, "C": 1.5}, rel=REL
+    )
+
+
+def test_a_condition_with_no_selected_gate_drops_out_of_the_run(tmp_path):
+    """Scoped out exactly as an excluded value is, rather than scored to an empty file.
+
+    This is the shape of a real metadata sheet: the unsorted input sample carries no pH, so
+    the pH column gives it a condition of its own, and that condition has nothing to score
+    once `input` is off the ladder. An empty result is indistinguishable from a failed run.
+    """
+    reads = pl.concat(
+        [
+            reads_frame(BASE_ROWS, condition="pH7"),
+            reads_frame(INPUT_GATE_ROWS, condition="NA"),
+        ]
+    )
+    code, _, manifest = invoke(tmp_path, reads, variants_frame(BASE_MUTATION_COUNTS))
+
+    assert code == 0
+    assert [entry["condition"] for entry in manifest["conditions"]] == ["pH7"]
+
+
+def test_sort_fractions_of_an_unselected_gate_are_neither_required_nor_summed(tmp_path):
+    """A gate outside the run supplies nothing the weighted mean used, so its fraction is not
+    part of the condition's sum — and a null on it is not a missing value.
+
+    Both halves matter: summed in, the 0.6 below would over-sum the condition and refuse a
+    run that is entirely valid; demanded, the null would refuse it for a different reason.
+    """
+    reads = reads_frame(BASE_ROWS + INPUT_GATE_ROWS).with_columns(
+        pl.col("gate")
+        .replace_strict({"g1": 0.5, "g2": 0.3, "g3": 0.2, "input": None}, return_dtype=pl.Float64)
+        .alias("sortFraction")
+    )
+    code, out_dir, manifest = invoke(
+        tmp_path, reads, variants_frame(BASE_MUTATION_COUNTS), sort_fraction_column="sortFraction"
+    )
+
+    assert code == 0
+    entry = manifest["conditions"][0]
+    assert entry["sortYieldCorrected"] is True
+    assert entry["sortFractionSum"] == pytest.approx(1.0, rel=REL)
+    # The corrected score of the selected ladder, unchanged by the unselected gate.
+    assert read_scores(out_dir, entry["gateRankMeanFile"], "gateRankMean")["P"] == pytest.approx(2.36, rel=REL)
+
+
+def test_replicates_in_an_unselected_gate_do_not_fail_the_run(tmp_path):
+    """The one-sample-per-group rule is about the groups the run has. Two samples sharing a
+    gate nobody ranked are not a group of this run, and refusing on them would block a
+    project whose input or NSB arm was simply sequenced twice."""
+    reads = pl.concat(
+        [
+            reads_frame(BASE_ROWS + INPUT_GATE_ROWS),
+            pl.DataFrame(
+                {
+                    "sampleId": ["input_replicate"],
+                    "variantKey": ["P"],
+                    "reads": [5],
+                    "condition": ["pH7"],
+                    "gate": ["input"],
+                },
+                schema_overrides={"reads": pl.Int64},
+            ),
+        ]
+    )
+    code, out_dir, manifest = invoke(tmp_path, reads, variants_frame(BASE_MUTATION_COUNTS))
+
+    assert code == 0
+    assert read_scores(out_dir, manifest["conditions"][0]["gateRankMeanFile"], "gateRankMean") == pytest.approx(
+        BASE_MEANS, rel=REL
+    )
+
+
+# ---------------------------------------------------------------------------
 # The three states of binScore.
 # ---------------------------------------------------------------------------
 

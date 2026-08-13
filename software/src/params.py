@@ -2,7 +2,10 @@
 
 Shape is fixed by `computation-interface`:
 
-    gateRanks           each distinct value of the gate column -> its integer rank
+    gateRanks           each *selected* gate value -> its integer rank, contiguous from 1.
+                        The key set is the run's gate scope: a value of the gate column
+                        absent from it is not a rung on the ladder and its samples are
+                        dropped. Coverage of the column is neither required nor checked.
     excludedConditions  condition values to drop; empty where none are excluded
     readFloor           a non-negative integer, or null for no floor
     sortFractionColumn  the reads-table column carrying frac_cb, or null for uncorrected

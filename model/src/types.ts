@@ -14,10 +14,15 @@ export type BlockArgs = {
   /** 3. A per-sample metadata column, picked for the other role. */
   gateColumnRef: SUniversalPColumnId;
   /**
-   * 4. A rank per distinct value of the gate column, along the binding axis.
+   * 4. A rank per **selected** gate, along the binding axis. Ranks are contiguous from 1.
    *
    * Derived from `BlockData.gateOrder` by position — the workflow and the computation want a
    * value → rank map, the user wants to drag a list.
+   *
+   * The key set doubles as the run's gate scope: a value of the gate column absent from this
+   * map is not a rung on the ladder, and its samples take no part in the run. A gate column
+   * that also names an unsorted input or a specificity arm is the ordinary case, not an
+   * incomplete configuration.
    */
   gateRanks: Record<string, number>;
   /** 5. Absent (empty) means every distinct value of the condition column is a condition. */
@@ -38,11 +43,15 @@ export type BlockData = {
   conditionColumnRef?: SUniversalPColumnId;
   gateColumnRef?: SUniversalPColumnId;
   /**
-   * The gate values in declared order, weakest binder first.
+   * The selected gates in declared order, weakest binder first.
    *
    * A list rather than a value → rank map because the control is drag-to-reorder and position
    * *is* the rank, which makes a duplicated rank and a rank naming an absent value
    * unrepresentable rather than merely refused.
+   *
+   * Seeded with every value the gate column carries when the column is picked, and then
+   * **narrowed by the user**: removing a gate takes it out of the run. It need not cover
+   * `gateValues`, only be non-empty and name nothing outside it.
    */
   gateOrder: string[];
   excludedConditions: string[];

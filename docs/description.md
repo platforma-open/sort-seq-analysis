@@ -16,12 +16,3 @@ A run over N conditions emits both quantities N times, once per condition. A one
 ordinary run: it gets both quantities, with the run's single condition on each column exactly as a
 two-condition run would carry two.
 
-## Downstream
-
-Everything downstream of this block is a comparison of these scores — a pH switch is the difference between
-a variant's bin score at two pH arms, the on-state is its raw score at the arm the campaign treats as *on*,
-and a shortlist is a ranking over one of them.
-
-## Status
-
-Under development. The specification lives in `docs/text/work/projects/sequence-repertoires/facs-bin-analysis/`.

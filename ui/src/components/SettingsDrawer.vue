@@ -145,7 +145,12 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
 
     <!-- The ordering IS the signal: a silently wrong order inverts every score and nothing
          downstream re-checks it. A drag list makes the order the thing manipulated directly,
-         and a duplicate or missing rank impossible to express. -->
+         and a duplicate or skipped rank impossible to express.
+
+         The list is also the gate *selection*: removing a value takes it and its samples out
+         of the run, and the ranks close up behind it. Seeded with every value the column
+         carries, because a run that uses all of them should need no editing. -->
+
     <PlAccordion v-if="app.model.data.gateOrder.length > 0" multiple>
       <PlAccordionSection v-model="gateOrderOpen" label="Gate Order">
         <div style="display: flex; margin-bottom: -15px">
@@ -153,7 +158,9 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
           <PlTooltip class="info">
             <template #label>Define gate order</template>
             <template #tooltip>
-              Weakest binder first — reversing this order inverts every score.
+              Weakest binder first — reversing this order inverts every score. Remove any value that
+              is not a sort gate — an unsorted input, a specificity or stability arm — and its
+              samples take no part in the run.
             </template>
           </PlTooltip>
         </div>
