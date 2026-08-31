@@ -2,6 +2,8 @@ import {
   BlockModelV3,
   createPFrameForGraphs,
   createPlDataTableV3,
+  DataColumn,
+  discoverTableColumnSnaphots,
   type InferOutputsType,
   type PColumn,
   type PColumnSpec,
@@ -9,6 +11,7 @@ import {
   type StringMatcher,
   type SUniversalPColumnId,
 } from "@platforma-sdk/model";
+import { kind } from "@platforma-open/milaboratories.sort-seq-analysis.kind";
 import { Annotation, FacsBin, isAbundanceAnchor, metadataSelector, PColumnName } from "./columns";
 import { blockDataModel } from "./dataModel";
 import type { BlockArgs, BlockData, RunManifest } from "./types";
@@ -134,7 +137,7 @@ export function distributionPlotTitle(
     : `Variant Frequency — ${condition}`;
 }
 
-export const platforma = BlockModelV3.create(blockDataModel)
+export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind })
   .args<BlockArgs>((data) => {
     // Throwing marks args invalid and disables Run, but carries no reason to the user — the
     // `settingsIssues` output below is what names the offending input.
@@ -238,6 +241,12 @@ export const platforma = BlockModelV3.create(blockDataModel)
    * Main — one row per variant, carrying both scored columns for every retained condition
    * together with the pool columns that share the variant axis.
    *
+   * **This run's scored columns and no other block's.** A second sort-seq block on the same
+   * project exports columns whose specs are indistinguishable from this one's by anything
+   * discovery matches on, so the columns are supplied from this block's own output and the
+   * whole `pl7.app/facsBin/` namespace is excluded from the pool query — see the two comments
+   * in the body.
+   *
    * Anchored on `gateRankMean` rather than `binScore`, because the anchor decides whether the
    * table renders at all and `binScore` is legitimately absent at a condition whose parent
    * went unscored. Anchored on that, a run that scored perfectly well everywhere else would
@@ -256,10 +265,10 @@ export const platforma = BlockModelV3.create(blockDataModel)
    * value only makes the pick stable across renders.
    */
   .outputWithStatus("resultsTable", (ctx) => {
-    const columns = ctx.outputs?.resolve("scoresPf")?.getPColumns();
-    if (!columns) return undefined;
+    const own = ctx.outputs?.resolve("scoresPf")?.getPColumns();
+    if (!own) return undefined;
 
-    const anchor = columns
+    const anchor = own
       .filter((column) => column.spec.name === FacsBin.GateRankMean)
       .sort((a, b) =>
         (a.spec.domain?.[FacsBin.ConditionDomain] ?? "").localeCompare(
@@ -268,15 +277,40 @@ export const platforma = BlockModelV3.create(blockDataModel)
       )[0];
     if (!anchor) return undefined;
 
-    return createPlDataTableV3(ctx, {
-      columns: {
-        anchors: { main: anchor.spec },
-        // Strict axis equality, so only columns keyed on the variant axis and nothing else get
-        // in. "related" would let both sides' axes float and reach every column the variant
-        // axis participates in — the per-position state matrix, this block's own per-gate
-        // distribution — giving a row per variant per position per gate.
-        selector: { mode: "exact" },
+    // This block's own scored columns, every one of them, taken from the workflow output.
+    // They are the table's primary columns, so they are always shown and never compete with
+    // a namesake from the pool.
+    const primaryColumns = own.map((column) => DataColumn.fromColumn(column));
+
+    // Everything else the variant axis reaches — the variant label, the mutation list, the
+    // per-variant columns of the upstream profiler.
+    //
+    // **Every `pl7.app/facsBin/` column is excluded here, this block's own included.** The
+    // pool carries the exports of *every* sort-seq block on the project, and their specs are
+    // identical in every part the discovery matches on: same name, same variant axis. Only
+    // the `pl7.app/block` domain key tells them apart, and a selector can require a domain
+    // value but cannot refuse one — so there is no selector that admits this instance's
+    // columns and refuses a sibling's. Dropping the whole namespace and supplying this
+    // block's own columns above is what makes the table show one run.
+    //
+    // Excluding them also removes the duplicate this block creates for itself: its scores
+    // reach the pool through `exports.pf` as well, and discovery would find that copy
+    // alongside the output columns.
+    const { primary, secondary } = discoverTableColumnSnaphots(ctx, {
+      anchors: { main: anchor.spec },
+      // Strict axis equality, so only columns keyed on the variant axis and nothing else get
+      // in. "related" would let both sides' axes float and reach every column the variant
+      // axis participates in — the per-position state matrix, this block's own per-gate
+      // distribution — giving a row per variant per position per gate.
+      selector: {
+        mode: "exact",
+        exclude: [{ name: [{ type: "regex", value: "^pl7\\.app/facsBin/.*$" }] }],
       },
+    });
+
+    return createPlDataTableV3(ctx, {
+      primaryColumns,
+      columns: [...primary, ...secondary],
       tableState: ctx.data.resultsTableState,
       displayOptions: {
         /**
@@ -287,6 +321,9 @@ export const platforma = BlockModelV3.create(blockDataModel)
          * `optional` rather than `hidden` for the remainder: they stay one click away in the
          * column picker. Hiding a column a user wants, with no way to bring it back, is the
          * worse failure.
+         *
+         * The two score rules are the block's own columns, which are primary and therefore
+         * always on screen; the rules state their visibility for the column picker's sake.
          */
         visibility: [
           { match: { name: exact(FacsBin.GateRankMean) }, visibility: "default" },
@@ -360,6 +397,24 @@ export const platforma = BlockModelV3.create(blockDataModel)
 
   /** Exposed so the UI can show it as the subtitle field's placeholder. */
   .output("defaultBlockLabel", (ctx) => deriveBlockLabel(ctx.data))
+
+  /**
+   * The inverse of the data model's `init`: the same seven fields, so a project exported as a
+   * template and re-applied comes back with the metadata reading it went out with.
+   *
+   * Mandatory — `done()` throws without it. The three value snapshots are here for the reason
+   * the kind gives: without them a templated gate ladder arrives unrunnable, and the only way
+   * to make it runnable destroys the ladder.
+   */
+  .templateParams((data) => ({
+    conditionColumnRef: data.conditionColumnRef,
+    gateColumnRef: data.gateColumnRef,
+    sortFractionColumnRef: data.sortFractionColumnRef,
+    gateOrder: data.gateOrder,
+    gateValues: data.gateValues,
+    gateColumnLabel: data.gateColumnLabel,
+    conditionValues: data.conditionValues,
+  }))
 
   /**
    * The block's own name, and nothing else. What this *instance* is configured for belongs
