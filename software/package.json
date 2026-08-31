@@ -1,6 +1,6 @@
 {
   "name": "@platforma-open/milaboratories.sort-seq-analysis.software",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Sort-seq analysis score computation",
   "files": [
     "./dist/**/*"
