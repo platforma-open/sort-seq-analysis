@@ -1,5 +1,27 @@
 # @platforma-open/milaboratories.sort-seq-analysis.model
 
+## 1.0.4
+
+### Patch Changes
+
+- d3a1dba: Migrate to the latest block template and declare the block kind.
+
+  Adds the mandatory `kind/` package with the block's init-params contract: the condition, gate
+  and sort-fraction column refs, the gate ladder, and the value snapshots a template needs to
+  arrive runnable. The model is built with the kind and projects the same fields back out
+  through `templateParams`.
+
+  Also takes the block through the canonical SDK upgrade — model/ui-vue 1.83.x, workflow-tengo
+  6.8.3, tengo-builder 4.0.23, block-tools 2.14.3.
+
+- 9ca1d8a: Results table shows only this block's scores. A second Sort-Seq Analysis block on the same
+  project exported columns the table's pool query could not tell apart from this one's, so both
+  runs' `gateRankMean` and `binScore` appeared side by side. The block's own columns now come
+  from its workflow output as the table's primary columns, and the whole `pl7.app/facsBin/`
+  namespace is excluded from the pool query.
+- Updated dependencies [d3a1dba]
+  - @platforma-open/milaboratories.sort-seq-analysis.kind@1.0.1
+
 ## 1.0.3
 
 ### Patch Changes
