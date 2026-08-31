@@ -105,6 +105,19 @@ export type GateCollected = {
   depth: number;
 };
 
+/** One condition-and-gate group whose reads were pooled across several samples. */
+export type PooledGroup = {
+  condition: string;
+  gate: string;
+  /** Sample **ids**, sorted. The UI resolves them to labels via `sampleLabelPframe`. */
+  samples: string[];
+  /**
+   * The replicates supplied different fractions and the non-null values were averaged. Absent
+   * in the uncorrected mode.
+   */
+  sortFractionsDiffer?: boolean;
+};
+
 /** The manifest's per-condition entry. */
 export type ConditionSummary = {
   /** Verbatim, exactly as it appears in the metadata column. */
@@ -141,5 +154,7 @@ export type RunManifest = {
    * no mutation-count table at all, which is a third state rather than a reason.
    */
   parentAbsenceReason: string | null;
+  /** Retained conditions only; empty on a run with no replicates. */
+  pooledGroups: PooledGroup[];
   conditions: ConditionSummary[];
 };

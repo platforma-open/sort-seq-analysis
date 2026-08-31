@@ -1,8 +1,8 @@
-"""The two data-value refusals this side owns.
+"""The one data-value refusal this side owns.
 
-`validation-boundary` assigns exactly these to the computation, because both need the
-column *values* rather than a picked column reference: whether a set of fractions sums to
-1, and whether two samples share a gate, are properties of the project's data.
+`validation-boundary` assigns it to the computation because it needs the column *values*
+rather than a picked column reference: whether a set of fractions sums to 1 is a property
+of the project's data.
 
 Every configuration rule — a required argument absent, an anchor resolving to nothing or
 to more than one column, the three metadata roles not distinct, an empty gate order,
@@ -12,7 +12,11 @@ two languages, either changeable alone, is a rule that will disagree; the failur
 specific and bad, a model-side check drifting looser so the settings pass and the run
 fails anyway with a different message.
 
-Both refusals name the offending values and are raised before any file is written, so
+`pooling` has already collapsed the table to one row per (condition, gate, variant), which
+is what keeps `_check_sum_per_condition` correct: it sums one value per sample, and a gate
+collected twice would otherwise contribute its fraction twice.
+
+The refusal names the offending values and is raised before any file is written, so
 nothing partial is produced.
 """
 
@@ -29,45 +33,6 @@ from constants import (
     SORT_FRACTION_SUM_TOLERANCE,
 )
 from errors import Refusal
-
-
-def check_one_sample_per_group(reads: pl.DataFrame, retained_conditions: list[str]) -> None:
-    """v1 admits at most one sample per condition-and-gate group.
-
-    Two samples in a group **fail the run**. Their reads are not pooled and neither sample
-    is preferred: summing them would move every depth, frequency and weighted mean in the
-    run, which is exactly the shape of failure `input-defaults` bars — output of ordinary
-    length and plausible content, with nothing saying an aggregation was chosen.
-
-    Replicate support is a v2 addition, and what v2 must supply is an aggregation rule for
-    the reads plus an agreement rule for the per-sample values the group then has more
-    than one of. Until it does, refusing is the only honest option.
-
-    No sample for a pair is **not** an error — that gate was not collected at that
-    condition, which clauses 1 and 2 already accommodate.
-
-    Only retained conditions are checked; an excluded value is not part of the run. The
-    caller likewise hands over only the selected gates' rows, so two samples sharing a gate
-    the run does not cover pass unremarked — that pair is not a group of this run.
-    """
-    offenders = (
-        reads.filter(pl.col(COL_CONDITION).is_in(retained_conditions))
-        .group_by(COL_CONDITION, COL_GATE)
-        .agg(pl.col(COL_SAMPLE).unique().sort().alias("samples"))
-        .filter(pl.col("samples").list.len() > 1)
-        .sort(COL_CONDITION, COL_GATE)
-    )
-    if offenders.height == 0:
-        return
-
-    detail = "; ".join(
-        f"condition {row[COL_CONDITION]!r} gate {row[COL_GATE]!r}: samples {', '.join(row['samples'])}"
-        for row in offenders.iter_rows(named=True)
-    )
-    raise Refusal(
-        f"more than one sample in a condition-and-gate group, which v1 does not support "
-        f"(reads are not pooled): {detail}"
-    )
 
 
 def check_sort_fractions(reads: pl.DataFrame, column: str, retained_conditions: list[str]) -> None:
@@ -104,7 +69,8 @@ def check_sort_fractions(reads: pl.DataFrame, column: str, retained_conditions: 
     in_run = reads.filter(pl.col(COL_CONDITION).is_in(retained_conditions))
 
     # One supplied value per sample: the sort fraction is per-sample metadata, repeated
-    # across the sample's variant rows.
+    # across the sample's variant rows. After `pooling` this is also one value per
+    # (condition, gate), which is the grain the sum below must be taken on.
     per_sample = in_run.group_by(COL_SAMPLE, COL_CONDITION, COL_GATE).agg(
         pl.col(column).first().alias("fraction"),
         pl.col(COL_READS).sum().alias("sample_reads"),

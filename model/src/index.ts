@@ -12,7 +12,14 @@ import {
   type SUniversalPColumnId,
 } from "@platforma-sdk/model";
 import { kind } from "@platforma-open/milaboratories.sort-seq-analysis.kind";
-import { Annotation, FacsBin, isAbundanceAnchor, metadataSelector, PColumnName } from "./columns";
+import {
+  Annotation,
+  FacsBin,
+  isAbundanceAnchor,
+  metadataSelector,
+  PColumnName,
+  sampleLabelSelector,
+} from "./columns";
 import { blockDataModel } from "./dataModel";
 import type { BlockArgs, BlockData, RunManifest } from "./types";
 
@@ -24,10 +31,9 @@ export * from "./types";
  * Every configuration rule, checked here and **nowhere else**. These six are decidable from the
  * arguments and snapshotted column values alone, so they are refused before the run starts.
  *
- * The two data-value rules — sort fractions, one sample per condition-and-gate group — belong
- * to the computation and are deliberately not approximated here: a duplicated rule is one that
- * will disagree, and it fails by drifting looser, so the settings pass and the run fails anyway
- * with a different message.
+ * The one data-value rule — sort fractions — belongs to the computation and is deliberately not
+ * approximated here: a duplicated rule is one that will disagree, and it fails by drifting
+ * looser, so the settings pass and the run fails anyway with a different message.
  */
 export function settingsIssues(data: BlockData): string[] {
   const issues: string[] = [];
@@ -231,6 +237,29 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
     if (!columns || columns.length === 0) return undefined;
 
     return ctx.createPFrame(columns as PColumn<PColumnValues>[]);
+  })
+
+  /**
+   * The sample label column, so the UI can resolve the pooling report's `PlId`s to sample names.
+   * Kept out of `metadataColumnsPframe`, whose columns are the roles the pickers offer.
+   */
+  .output("sampleLabelPframe", (ctx) => {
+    const anchor = ctx.data.abundanceRef;
+    if (!anchor) return undefined;
+
+    const columns = ctx.resultPool.getAnchoredPColumns({ main: anchor }, [sampleLabelSelector]);
+    if (!columns || columns.length === 0) return undefined;
+
+    return ctx.createPFrame(columns as PColumn<PColumnValues>[]);
+  })
+
+  /** The `PObjectId` for reading that column out of the frame above. */
+  .output("sampleLabelColumnId", (ctx) => {
+    const anchor = ctx.data.abundanceRef;
+    if (!anchor) return undefined;
+
+    const columns = ctx.resultPool.getAnchoredPColumns({ main: anchor }, [sampleLabelSelector]);
+    return columns?.[0]?.id;
   })
 
   // ---------------------------------------------------------------------------

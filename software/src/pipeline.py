@@ -32,18 +32,22 @@ from constants import (
 )
 from io_layer import distribution_file_name, score_file_name, write_manifest, write_table
 from params import Params
-from validate import check_one_sample_per_group, check_sort_fractions
+from pooling import pool_replicates
+from validate import check_sort_fractions
 
 
 def run(reads: pl.DataFrame, variants: pl.DataFrame | None, params: Params, out_dir: Path) -> dict:
     """Score every retained condition and write every file. Returns the manifest."""
     in_scope = selected_gates(reads, params)
+
+    # Before pooling: the report is confined to retained conditions.
     retained = retained_conditions(in_scope, params)
 
-    # Both refusals run over the whole run before anything is written, so a failure leaves
-    # nothing partial behind. Over the in-scope rows only: a second sample in a gate the run
-    # does not cover, or a missing sort fraction on one, is not this run's problem.
-    check_one_sample_per_group(in_scope, retained)
+    # Must run before anything else reads the table — see `pooling`. Over the in-scope rows
+    # only, so a second sample in a gate the run does not cover is not pooled.
+    in_scope, pooled_groups = pool_replicates(in_scope, params.sort_fraction_column, retained)
+
+    # Over the whole run before anything is written, so a failure leaves nothing partial.
     if params.sort_fraction_column is not None:
         check_sort_fractions(in_scope, params.sort_fraction_column, retained)
 
@@ -61,6 +65,8 @@ def run(reads: pl.DataFrame, variants: pl.DataFrame | None, params: Params, out_
         # Null where there was no mutation-count table at all: the two reasons below are
         # for a table that exists and does not identify a single parent.
         "parentAbsenceReason": parent.absence_reason,
+        # Retained conditions only; empty on a run with no replicates.
+        "pooledGroups": pooled_groups,
         "conditions": conditions,
     }
     write_manifest(manifest, out_dir)

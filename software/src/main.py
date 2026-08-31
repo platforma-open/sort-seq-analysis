@@ -90,6 +90,16 @@ def _report(manifest: dict) -> None:
         detail = reason if reason is not None else "no mutation-count table supplied"
         print(f"Parent row: not identified ({detail})")
 
+    for entry in manifest["pooledGroups"]:
+        samples = " + ".join(entry["samples"])
+        line = (
+            f"Pooled condition {entry['condition']!r} gate {entry['gate']!r}: "
+            f"{len(entry['samples'])} samples merged ({samples})"
+        )
+        if entry.get("sortFractionsDiffer"):
+            line += " — WARNING: replicates supplied different sort fractions; averaged"
+        print(line)
+
     for entry in manifest["conditions"]:
         gates = ", ".join(f"{gate['gate']}={gate['depth']}" for gate in entry["gatesCollected"])
         summary = (

@@ -1,7 +1,7 @@
-"""The two data-value refusals.
+"""The sort-fraction refusal — the one data-value refusal.
 
-Each asserts the refusal fires **and** that its message names the offending values — the
-message is the whole of what the user gets, since nothing partial is produced.
+Each case asserts the refusal fires **and** that its message names the offending values —
+the message is the whole of what the user gets, since nothing partial is produced.
 """
 
 from __future__ import annotations
@@ -11,68 +11,9 @@ import pytest
 from conftest import BASE_ROWS, reads_frame
 
 from errors import Refusal
-from validate import check_one_sample_per_group, check_sort_fractions
+from validate import check_sort_fractions
 
 RETAINED = ["pH7"]
-
-
-def test_one_sample_per_group_passes_on_the_v1_grain():
-    check_one_sample_per_group(reads_frame(BASE_ROWS), RETAINED)
-
-
-def test_two_samples_in_one_group_refuses_and_names_them():
-    """Reads are not pooled and neither sample is preferred: summing them would move every
-    depth, frequency and weighted mean in the run, invisibly."""
-    frame = pl.concat(
-        [
-            reads_frame(BASE_ROWS),
-            pl.DataFrame(
-                {
-                    "sampleId": ["replicate_of_g1"],
-                    "variantKey": ["P"],
-                    "reads": [5],
-                    "condition": ["pH7"],
-                    "gate": ["g1"],
-                },
-                schema_overrides={"reads": pl.Int64},
-            ),
-        ]
-    )
-
-    with pytest.raises(Refusal) as excinfo:
-        check_one_sample_per_group(frame, RETAINED)
-
-    message = str(excinfo.value)
-    assert "replicate_of_g1" in message
-    assert "'g1'" in message
-    assert "not pooled" in message
-
-
-def test_a_group_with_no_sample_is_not_an_error():
-    """That gate was not collected at that condition — clauses 1 and 2 accommodate it."""
-    rows = [row for row in BASE_ROWS if row[0] != "g3"]
-    check_one_sample_per_group(reads_frame(rows), RETAINED)
-
-
-def test_duplicate_in_an_excluded_condition_is_ignored():
-    """An excluded value is not part of the run."""
-    frame = pl.concat(
-        [
-            reads_frame(BASE_ROWS),
-            reads_frame([("g1", "P", 5)], condition="pH5"),
-            pl.DataFrame(
-                {
-                    "sampleId": ["other"],
-                    "variantKey": ["P"],
-                    "reads": [5],
-                    "condition": ["pH5"],
-                    "gate": ["g1"],
-                },
-                schema_overrides={"reads": pl.Int64},
-            ),
-        ]
-    )
-    check_one_sample_per_group(frame, RETAINED)
 
 
 # ---------------------------------------------------------------------------

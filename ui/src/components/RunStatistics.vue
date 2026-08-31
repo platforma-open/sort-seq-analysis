@@ -12,6 +12,7 @@
  * Open state is a local `ref`, not `BlockData`: in `data` it is shared, so one person opening
  * the dialog would open it for everyone with the project open.
  */
+import { getSingleColumnData, type PObjectId } from "@platforma-sdk/model";
 import {
   PlAgOverlayLoading,
   PlAlert,
@@ -19,6 +20,7 @@ import {
   PlDialogModal,
   PlLogView,
   PlMaskIcon24,
+  useWatchFetch,
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
@@ -47,6 +49,49 @@ const parentAbsence = computed(() => {
     return "More than one variant has an amino-acid mutation count of zero. Bin scores are emitted in the cancelled form.";
   }
   return "No mutation-count column was available, so no bin score was produced.";
+});
+
+/**
+ * `sampleId` -> sample name. The label column has one axis, so `axesData`'s single entry lines
+ * up with `data` by position. Empty until resolved, or where upstream published no labels.
+ */
+const sampleLabels = useWatchFetch(
+  () => ({
+    pframe: app.model.outputs.sampleLabelPframe,
+    columnId: app.model.outputs.sampleLabelColumnId,
+  }),
+  async ({ pframe, columnId }) => {
+    const out: Record<string, string> = {};
+    if (!pframe || !columnId) return out;
+
+    const column = await getSingleColumnData(pframe, columnId as PObjectId);
+    const ids = Object.values(column?.axesData ?? {})[0] ?? [];
+    const labels = column?.data ?? [];
+    for (const [index, id] of ids.entries()) {
+      const label = labels[index];
+      if (id !== null && id !== undefined && label !== null && label !== undefined) {
+        out[String(id)] = String(label);
+      }
+    }
+    return out;
+  },
+);
+
+/** The sample's name, falling back to the raw id. */
+function labelFor(sampleId: string): string {
+  return sampleLabels.value?.[sampleId] ?? sampleId;
+}
+
+/** The pooled groups, or `undefined` where nothing was pooled — see `parentAbsence` on why. */
+const pooling = computed(() => {
+  const groups = manifest.value?.pooledGroups;
+  if (!groups || groups.length === 0) return undefined;
+  return {
+    lines: groups.map(
+      (group) => `${group.condition} / ${group.gate}: ${group.samples.map(labelFor).join(" + ")}`,
+    ),
+    fractionsDiffer: groups.some((group) => group.sortFractionsDiffer === true),
+  };
 });
 
 /** Already ordered by declared gate rank, so this reads along the binding axis. */
@@ -102,6 +147,19 @@ function binScoreCell(entry: {
       <PlAlert v-if="parentAbsence" type="warn">
         <template #title>Parent row not identified</template>
         {{ parentAbsence }}
+      </PlAlert>
+
+      <PlAlert v-if="pooling" type="warn">
+        <template #title>Replicate samples were pooled</template>
+        These gates were collected more than once, and their reads were summed. Depths, frequencies
+        and every score below are over the pooled reads.
+        <ul>
+          <li v-for="line in pooling.lines" :key="line">{{ line }}</li>
+        </ul>
+        <template v-if="pooling.fractionsDiffer">
+          Some replicates supplied different sort fractions; the values were averaged. Check that
+          the sort-fraction column is per gate rather than per replicate sort.
+        </template>
       </PlAlert>
 
       <table class="summary">
