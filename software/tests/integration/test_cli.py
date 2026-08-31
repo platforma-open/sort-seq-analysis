@@ -15,6 +15,7 @@ from conftest import (
     BASE_MUTATION_COUNTS,
     BASE_ROWS,
     reads_frame,
+    replicate_frame,
     variants_frame,
     write_params,
     write_tsv,
@@ -412,30 +413,100 @@ def test_over_summing_fractions_exits_non_zero_and_writes_nothing(tmp_path, caps
     assert "REFUSED" in captured.err
 
 
-def test_replicate_samples_exit_non_zero_and_write_nothing(tmp_path, capsys):
+def test_a_run_with_no_replicates_reports_no_pooling(tmp_path):
+    """The empty list is the statement: one sample per gate."""
+    _, _, manifest = invoke(tmp_path, reads_frame(BASE_ROWS), variants_frame(BASE_MUTATION_COUNTS))
+
+    assert manifest["pooledGroups"] == []
+
+
+def test_replicate_samples_are_pooled_and_the_pooling_is_reported(tmp_path, capsys):
+    """g1 is replicated with its own read counts, so its depth doubles (100 -> 200) along with
+    every read count in it — leaving every frequency and every weighted mean unchanged.
+    """
+    g1_rows = [row for row in BASE_ROWS if row[0] == "g1"]
+    reads = pl.concat([reads_frame(BASE_ROWS), replicate_frame(g1_rows, "replicate_of_g1")])
+
+    code, out_dir, manifest = invoke(tmp_path, reads, variants_frame(BASE_MUTATION_COUNTS))
+
+    assert code == 0
+    assert manifest["pooledGroups"] == [
+        {"condition": "pH7", "gate": "g1", "samples": ["replicate_of_g1", "s_pH7_g1"]}
+    ]
+
+    entry = manifest["conditions"][0]
+    # The pooled depth: the number the arithmetic used, which is what a read floor is set against.
+    depths = {gate["gate"]: gate["depth"] for gate in entry["gatesCollected"]}
+    assert depths == {"g1": 200, "g2": 100, "g3": 100}
+    assert read_scores(out_dir, entry["gateRankMeanFile"], "gateRankMean") == pytest.approx(BASE_MEANS, rel=REL)
+
+    captured = capsys.readouterr()
+    assert "Pooled condition 'pH7' gate 'g1'" in captured.out
+    assert "replicate_of_g1" in captured.out
+
+
+def test_replicates_disagreeing_on_the_sort_fraction_warn_rather_than_refuse(tmp_path, capsys):
+    """0.5 and 0.3 average to 0.4, so the condition sums to 0.9 and the run proceeds."""
+    fractions = {"g1": 0.5, "g2": 0.3, "g3": 0.2}
+    g1_rows = [row for row in BASE_ROWS if row[0] == "g1"]
+    reads = pl.concat(
+        [
+            reads_frame(BASE_ROWS, fractions=fractions),
+            replicate_frame(g1_rows, "replicate_of_g1", fractions={**fractions, "g1": 0.3}),
+        ]
+    )
+
+    code, _, manifest = invoke(
+        tmp_path, reads, variants_frame(BASE_MUTATION_COUNTS), sort_fraction_column="sortFraction"
+    )
+
+    assert code == 0
+    assert manifest["pooledGroups"][0]["sortFractionsDiffer"] is True
+    assert manifest["conditions"][0]["sortFractionSum"] == pytest.approx(0.9, rel=REL)
+    assert "different sort fractions" in capsys.readouterr().out
+
+
+def test_excluded_conditions_are_not_reported_as_pooled(tmp_path):
+    """A factor column with three values, one selected: only that one's groups are the run's."""
+    g1_rows = [row for row in BASE_ROWS if row[0] == "g1"]
+    reads = pl.concat(
+        [
+            reads_frame(BASE_ROWS, condition=condition)
+            for condition in ("specificity", "affinity", "polyspecificity")
+        ]
+        + [
+            replicate_frame(g1_rows, f"rep_{condition}", condition=condition)
+            for condition in ("specificity", "affinity", "polyspecificity")
+        ]
+    )
+
+    code, _, manifest = invoke(
+        tmp_path,
+        reads,
+        variants_frame(BASE_MUTATION_COUNTS),
+        excluded=["affinity", "polyspecificity"],
+    )
+
+    assert code == 0
+    assert [entry["condition"] for entry in manifest["conditions"]] == ["specificity"]
+    assert [entry["condition"] for entry in manifest["pooledGroups"]] == ["specificity"]
+
+
+def test_a_replicate_in_an_unselected_gate_is_not_pooled(tmp_path):
+    """A gate the run does not rank is dropped whole, replicate included, rather than merged."""
     reads = pl.concat(
         [
             reads_frame(BASE_ROWS),
-            pl.DataFrame(
-                {
-                    "sampleId": ["replicate"],
-                    "variantKey": ["P"],
-                    "reads": [5],
-                    "condition": ["pH7"],
-                    "gate": ["g1"],
-                },
-                schema_overrides={"reads": pl.Int64},
-            ),
+            reads_frame([("unsorted", "P", 40)]),
+            replicate_frame([("unsorted", "P", 40)], "replicate_of_unsorted"),
         ]
     )
-    code, out_dir, manifest = invoke(tmp_path, reads, variants_frame(BASE_MUTATION_COUNTS))
 
-    assert code == 1
-    assert manifest is None
-    assert not out_dir.exists()
-    captured = capsys.readouterr()
-    assert "replicate" in captured.out
-    assert "replicate" in captured.err
+    code, _, manifest = invoke(tmp_path, reads, variants_frame(BASE_MUTATION_COUNTS))
+
+    assert code == 0
+    assert manifest["pooledGroups"] == []
+    assert [gate["gate"] for gate in manifest["conditions"][0]["gatesCollected"]] == ["g1", "g2", "g3"]
 
 
 def test_sort_fraction_column_missing_from_the_reads_table_fails(tmp_path, capsys):

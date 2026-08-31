@@ -31,6 +31,8 @@ export const PColumnName = {
   MutationCount: "pl7.app/repertoire/mutationCount",
   /** The variant axis's label column — shown as "Variant Id". */
   VariantLabel: "pl7.app/label",
+  /** The **sample** axis's label column. Same name as `VariantLabel`; the axis picks one. */
+  SampleLabel: "pl7.app/label",
   /** The per-variant mutation list, shown as "Mutations". */
   Mutations: "pl7.app/repertoire/mutations",
 } as const;
@@ -102,6 +104,16 @@ export function isAbundanceAnchor(spec: PObjectSpec): boolean {
 export const metadataSelector: AnchoredPColumnSelector = {
   axes: [{ anchor: "main", idx: 0 }],
   name: PColumnName.Metadata,
+};
+
+/**
+ * The sample axis's label column. `pl7.app/isLabel` is required alongside the name, which the
+ * variant label column shares.
+ */
+export const sampleLabelSelector: AnchoredPColumnSelector = {
+  axes: [{ anchor: "main", idx: 0 }],
+  name: PColumnName.SampleLabel,
+  annotations: { "pl7.app/isLabel": "true" },
 };
 
 /**

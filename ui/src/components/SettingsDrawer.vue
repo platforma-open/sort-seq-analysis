@@ -139,7 +139,8 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
       @update:model-value="setGateColumn"
     >
       <template #tooltip>
-        Which sort gate each sample was collected from — one sample per gate per condition.
+        Which sort gate each sample was collected from. A gate collected more than once at one
+        condition has its replicates' reads pooled, and the run statistics say so.
       </template>
     </PlDropdown>
 

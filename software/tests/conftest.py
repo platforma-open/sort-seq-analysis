@@ -26,8 +26,9 @@ PARENT = "P"
 def reads_frame(rows: list[tuple[str, str, int]], condition: str = "pH7", fractions: dict[str, float] | None = None):
     """Build a reads table from (gate, variantKey, reads) triples.
 
-    One sample per (condition, gate) — the v1 grain `sample-gate-grouping` requires — with
-    the sample id derived from the pair so a caller cannot accidentally collide two.
+    One sample per (condition, gate) — the grain the arithmetic is defined on — with the
+    sample id derived from the pair so a caller cannot accidentally collide two. Use
+    `replicate_frame` for the second sample of a gate.
     """
     frame = pl.DataFrame(
         {
@@ -44,6 +45,19 @@ def reads_frame(rows: list[tuple[str, str, int]], condition: str = "pH7", fracti
             pl.col("gate").replace_strict(fractions, return_dtype=pl.Float64).alias("sortFraction")
         )
     return frame
+
+
+def replicate_frame(
+    rows: list[tuple[str, str, int]],
+    sample: str,
+    condition: str = "pH7",
+    fractions: dict[str, float] | None = None,
+):
+    """A second sample for gates `reads_frame` already covered. The sample id is given rather
+    than derived, so it collides on (condition, gate); concat the two frames."""
+    return reads_frame(rows, condition=condition, fractions=fractions).with_columns(
+        pl.lit(sample).alias("sampleId")
+    )
 
 
 # The base table. Every gate's depth is exactly 100.
