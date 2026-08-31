@@ -1,4 +1,5 @@
 import type { GraphMakerState } from "@milaboratories/graph-maker";
+import { kind } from "@platforma-open/milaboratories.sort-seq-analysis.kind";
 import { createPlDataTableStateV2, DataModelBuilder } from "@platforma-sdk/model";
 import type { BlockData } from "./types";
 
@@ -24,12 +25,29 @@ export function defaultDistributionGraphState(title: string): GraphMakerState {
  *
  * Later shape changes add `.migrate<Next>("Ver_…", prev => …)` links rather than editing this.
  */
-export const blockDataModel = new DataModelBuilder().from<BlockData>("Ver_2026_08_07").init(() => ({
-  gateOrder: [],
-  excludedConditions: [],
-  gateValues: [],
-  customBlockLabel: "",
-  conditionValues: [],
-  resultsTableState: createPlDataTableStateV2(),
-  distributionGraphStates: {},
-}));
+export const blockDataModel = new DataModelBuilder({ kind })
+  .from<BlockData>("Ver_2026_08_07")
+  // The first group is the kind's init-params contract, field for field, and
+  // `.templateParams(...)` in `index.ts` projects those same fields back out. The two are
+  // inverses; a field one names and the other drops is configuration that survives creation
+  // and vanishes on export.
+  //
+  // `params` is optional — a block may be created with no template — so every field keeps its
+  // own default behind it.
+  .init(({ params }) => ({
+    conditionColumnRef: params?.conditionColumnRef,
+    gateColumnRef: params?.gateColumnRef,
+    sortFractionColumnRef: params?.sortFractionColumnRef,
+    gateOrder: params?.gateOrder ?? [],
+    gateValues: params?.gateValues ?? [],
+    gateColumnLabel: params?.gateColumnLabel,
+    conditionValues: params?.conditionValues ?? [],
+
+    // Not init params. The dataset ref is project-scoped, the exclusions and the floor are
+    // decisions taken against the data in front of you, and the rest is view state. See the
+    // kind for the reasoning on each.
+    excludedConditions: [],
+    customBlockLabel: "",
+    resultsTableState: createPlDataTableStateV2(),
+    distributionGraphStates: {},
+  }));

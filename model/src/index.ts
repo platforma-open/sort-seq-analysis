@@ -11,6 +11,7 @@ import {
   type StringMatcher,
   type SUniversalPColumnId,
 } from "@platforma-sdk/model";
+import { kind } from "@platforma-open/milaboratories.sort-seq-analysis.kind";
 import { Annotation, FacsBin, isAbundanceAnchor, metadataSelector, PColumnName } from "./columns";
 import { blockDataModel } from "./dataModel";
 import type { BlockArgs, BlockData, RunManifest } from "./types";
@@ -136,7 +137,7 @@ export function distributionPlotTitle(
     : `Variant Frequency — ${condition}`;
 }
 
-export const platforma = BlockModelV3.create(blockDataModel)
+export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind })
   .args<BlockArgs>((data) => {
     // Throwing marks args invalid and disables Run, but carries no reason to the user — the
     // `settingsIssues` output below is what names the offending input.
@@ -396,6 +397,24 @@ export const platforma = BlockModelV3.create(blockDataModel)
 
   /** Exposed so the UI can show it as the subtitle field's placeholder. */
   .output("defaultBlockLabel", (ctx) => deriveBlockLabel(ctx.data))
+
+  /**
+   * The inverse of the data model's `init`: the same seven fields, so a project exported as a
+   * template and re-applied comes back with the metadata reading it went out with.
+   *
+   * Mandatory — `done()` throws without it. The three value snapshots are here for the reason
+   * the kind gives: without them a templated gate ladder arrives unrunnable, and the only way
+   * to make it runnable destroys the ladder.
+   */
+  .templateParams((data) => ({
+    conditionColumnRef: data.conditionColumnRef,
+    gateColumnRef: data.gateColumnRef,
+    sortFractionColumnRef: data.sortFractionColumnRef,
+    gateOrder: data.gateOrder,
+    gateValues: data.gateValues,
+    gateColumnLabel: data.gateColumnLabel,
+    conditionValues: data.conditionValues,
+  }))
 
   /**
    * The block's own name, and nothing else. What this *instance* is configured for belongs
