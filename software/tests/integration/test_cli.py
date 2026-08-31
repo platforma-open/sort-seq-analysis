@@ -404,8 +404,12 @@ def test_over_summing_fractions_exits_non_zero_and_writes_nothing(tmp_path, caps
     assert code == 1
     assert manifest is None
     assert not out_dir.exists()
-    # Diagnostics go to stdout — the workflow layer does not capture stderr.
-    assert "REFUSED" in capsys.readouterr().out
+    # Both streams, and both are pinned. Stdout is the run's record; stderr is the only
+    # stream the platform quotes back in the error it shows the user, so a refusal that
+    # reaches stdout alone is reported as a blank non-zero exit.
+    captured = capsys.readouterr()
+    assert "REFUSED" in captured.out
+    assert "REFUSED" in captured.err
 
 
 def test_replicate_samples_exit_non_zero_and_write_nothing(tmp_path, capsys):
@@ -429,7 +433,9 @@ def test_replicate_samples_exit_non_zero_and_write_nothing(tmp_path, capsys):
     assert code == 1
     assert manifest is None
     assert not out_dir.exists()
-    assert "replicate" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "replicate" in captured.out
+    assert "replicate" in captured.err
 
 
 def test_sort_fraction_column_missing_from_the_reads_table_fails(tmp_path, capsys):
@@ -439,7 +445,9 @@ def test_sort_fraction_column_missing_from_the_reads_table_fails(tmp_path, capsy
 
     assert code == 1
     assert not out_dir.exists()
-    assert "absent" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "absent" in captured.out
+    assert "absent" in captured.err
 
 
 # ---------------------------------------------------------------------------

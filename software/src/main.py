@@ -14,8 +14,14 @@ parent row, mutation count, parameters and runenv are all shared — so per-cond
 would multiply startup, leave the caller merging N manifests, and make the one-condition
 case a loop's degenerate iteration.
 
-**Diagnostics go to stdout**, including failures: the workflow layer does not capture
-stderr, so anything written there would be lost.
+**Diagnostics go to both streams, and that is deliberate.** They serve two different
+readers. Stdout is the run's audit trail: the block saves it as a log stream and the UI
+shows it, so the successful-run summary belongs there. Stderr is what the platform reads
+back when the command fails — the k8s runner fills the error dialog's "Latest output"
+from the stderr file alone. A refusal printed only to stdout therefore reaches the user
+as a blank "exited with code 1", with the reason sitting in a log panel nobody was told
+to open. So a refusal is written to both: stdout because it is part of the run's record,
+stderr because it is the failure the platform is about to report.
 """
 
 from __future__ import annotations
@@ -59,7 +65,12 @@ def main(argv: list[str] | None = None) -> int:
     except Refusal as refusal:
         # A data-value violation. Exit non-zero naming the offending values, having written
         # no file — nothing partial is produced.
-        print(f"REFUSED: {refusal}")
+        #
+        # Both streams, per the module docstring: stdout keeps the run's record complete,
+        # stderr is the only stream the platform quotes back in the error it shows.
+        message = f"REFUSED: {refusal}"
+        print(message)
+        print(message, file=sys.stderr)
         return 1
 
     _report(manifest)
