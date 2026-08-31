@@ -1,9 +1,9 @@
 ---
-'@platforma-open/milaboratories.sort-seq-analysis.kind': minor
-'@platforma-open/milaboratories.sort-seq-analysis.model': minor
+'@platforma-open/milaboratories.sort-seq-analysis.kind': patch
+'@platforma-open/milaboratories.sort-seq-analysis.model': patch
 '@platforma-open/milaboratories.sort-seq-analysis.ui': patch
 '@platforma-open/milaboratories.sort-seq-analysis.workflow': patch
-'@platforma-open/milaboratories.sort-seq-analysis': minor
+'@platforma-open/milaboratories.sort-seq-analysis': patch
 ---
 
 Migrate to the latest block template and declare the block kind.
