@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.sort-seq-analysis.block
 
+## 1.0.6
+
+### Patch Changes
+
+- 1958a6c: Re-enable the CI test phase and raise the SDK catalog to latest.
+
 ## 1.0.5
 
 ### Patch Changes
