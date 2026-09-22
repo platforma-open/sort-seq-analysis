@@ -1,10 +1,7 @@
-"""The parameter document.
+"""The parameter document, and the line between "absent" and "unspecified".
 
-The point of these tests is the line between "absent" and "unspecified". A null `readFloor`
-and a null `sortFractionColumn` are answers `input-defaults` states, not gaps — so they
-parse cleanly and mean something definite. A malformed document is a caller bug and raises,
-because the workflow writes this file itself: a bad shape means the two sides disagree about
-their own interface.
+A null `readFloor` or `sortFractionColumn` is an answer, not a gap. A malformed document
+raises: the workflow writes this file itself.
 """
 
 from __future__ import annotations
@@ -12,8 +9,14 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import GATE_RANKS, write_params
+from conftest import GATE_RANKS, INPUT_GATE, write_params
 
+from constants import (
+    BASELINE_SEQUENCE,
+    BASELINE_SYNONYMOUS,
+    RUN_MODE_ENRICHMENT,
+    RUN_MODE_GATE_RANKING,
+)
 from params import load_params
 
 
@@ -27,16 +30,18 @@ def test_defaults_are_answers_not_gaps(tmp_path):
     # No column: the run is uncorrected and says so on every value it emits.
     assert params.sort_fraction_column is None
     assert params.sort_yield_corrected is False
+    # No mode: the gate-ranking run, which is also every document written before
+    # enrichment existed.
+    assert params.mode == RUN_MODE_GATE_RANKING
+    assert params.scores_enrichment is False
+    assert params.input_gate is None
+    assert params.baseline is None
+    assert params.baseline_sequence is None
 
 
 def test_absent_optional_keys_mean_the_same_as_explicit_nulls(tmp_path):
-    """The document the workflow actually writes for a default run.
-
-    Tengo has no JSON null literal, so the template omits `readFloor` and
-    `sortFractionColumn` rather than nulling them. A reader that demanded all four keys
-    rejected every uncorrected, unfloored run — which is the normal first run — and the block
-    died inside the entrypoint with "missing required field(s)".
-    """
+    """The document the workflow actually writes for a default run: Tengo has no JSON null
+    literal, so it omits `readFloor` and `sortFractionColumn` rather than nulling them."""
     path = tmp_path / "params.json"
     path.write_text(json.dumps({"gateRanks": GATE_RANKS}), encoding="utf-8")
 
@@ -47,6 +52,77 @@ def test_absent_optional_keys_mean_the_same_as_explicit_nulls(tmp_path):
     assert params.read_floor is None
     assert params.sort_fraction_column is None
     assert params.sort_yield_corrected is False
+    assert params.mode == RUN_MODE_GATE_RANKING
+    assert params.input_gate is None
+    assert params.baseline is None
+
+
+# ---------------------------------------------------------------------------
+# Mode, input and baseline.
+# ---------------------------------------------------------------------------
+
+
+def test_enrichment_mode_reads_its_input_and_baseline(tmp_path):
+    params = load_params(
+        write_params(
+            tmp_path / "params.json",
+            mode=RUN_MODE_ENRICHMENT,
+            input_gate=INPUT_GATE,
+            baseline=BASELINE_SYNONYMOUS,
+        )
+    )
+
+    assert params.mode == RUN_MODE_ENRICHMENT
+    assert params.scores_enrichment is True
+    assert params.input_gate == INPUT_GATE
+    assert params.baseline == BASELINE_SYNONYMOUS
+
+
+def test_enrichment_mode_requires_an_input_gate(tmp_path):
+    """Enrichment with nothing to enrich against is a caller bug: the block model refuses
+    it before the run, so reaching here means the two sides disagree."""
+    with pytest.raises(ValueError, match="requires inputGate"):
+        load_params(write_params(tmp_path / "params.json", mode=RUN_MODE_ENRICHMENT))
+
+
+def test_the_input_gate_cannot_also_be_a_rung(tmp_path):
+    """It would enter its own denominator and every enrichment in that gate would be
+    exactly 1 — output of ordinary shape carrying no measurement at all."""
+    with pytest.raises(ValueError, match="cannot be a rung"):
+        load_params(
+            write_params(tmp_path / "params.json", mode=RUN_MODE_ENRICHMENT, input_gate="g2")
+        )
+
+
+def test_an_input_gate_outside_enrichment_mode_is_refused_not_ignored(tmp_path):
+    """Naming an input in a gate-ranking run means the caller believes one is in use.
+    Dropping it silently would score against nothing while the settings said otherwise."""
+    with pytest.raises(ValueError, match="meaningful only in"):
+        load_params(write_params(tmp_path / "params.json", input_gate=INPUT_GATE))
+
+
+def test_unknown_mode_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="mode must be one of"):
+        load_params(write_params(tmp_path / "params.json", mode="enrichment-v2"))
+
+
+def test_unknown_baseline_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="baseline must be one of"):
+        load_params(write_params(tmp_path / "params.json", baseline="parent"))
+
+
+def test_the_sequence_baseline_requires_a_sequence(tmp_path):
+    with pytest.raises(ValueError, match="requires baselineSequence"):
+        load_params(write_params(tmp_path / "params.json", baseline=BASELINE_SEQUENCE))
+
+
+def test_a_sequence_without_the_sequence_baseline_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="meaningful only with"):
+        load_params(
+            write_params(
+                tmp_path / "params.json", baseline=BASELINE_SYNONYMOUS, baseline_sequence="W4"
+            )
+        )
 
 
 def test_sort_fraction_column_sets_the_corrected_mode(tmp_path):

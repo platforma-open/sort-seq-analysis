@@ -7,9 +7,9 @@ variant's spread better than another's.
 
 This block turns that spread into a score, one per condition. For every variant it emits:
 
-- **Gate rank mean** — the read-weighted mean of the gate ranks the variant's reads fell in, in gate-rank
+- **Mean bin** — the read-weighted mean of the gate ranks the variant's reads fell in, in gate-rank
   units. Higher means the variant sorted into higher gates. Not an affinity and not calibrated.
-- **Bin score** — the gate rank mean minus the parent's. Zero means the variant behaves like the parent at
+- **Mean bin vs parent** — the mean bin minus the parent's. Zero means the variant behaves like the parent at
   that condition.
 
 A run over N conditions emits both quantities N times, once per condition. A one-condition run is an
