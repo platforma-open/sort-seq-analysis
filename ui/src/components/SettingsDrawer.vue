@@ -13,11 +13,13 @@ import {
   PlAccordion,
   PlAccordionSection,
   PlAlert,
+  PlBtnGhost,
   PlDropdown,
   PlCheckbox,
   PlElementList,
   PlDropdownMulti,
   PlDropdownRef,
+  PlMaskIcon24,
   PlNumberField,
   PlSlideModal,
   PlTextField,
@@ -94,6 +96,24 @@ const inputGateOptions = computed(() =>
     .filter((value) => !app.model.data.gateOrder.includes(value))
     .map((value) => ({ label: value, value })),
 );
+
+/**
+ * What `setGateColumn` seeds, minus the input gate — the input can never be a ranked gate, so
+ * removing it is not a modification to offer undoing.
+ */
+const defaultGateOrder = computed(() =>
+  gateValues.value.filter((value) => value !== app.model.data.inputGate),
+);
+
+const gateOrderModified = computed(() => {
+  const current = app.model.data.gateOrder;
+  const base = defaultGateOrder.value;
+  return current.length !== base.length || current.some((value, i) => value !== base[i]);
+});
+
+function resetGateOrder() {
+  app.model.data.gateOrder = [...defaultGateOrder.value];
+}
 
 /** `undefined` before a dataset is picked, so an unknown grain never hides a valid option. */
 const isNucleotide = computed(() => app.model.outputs.datasetIsNucleotide);
@@ -191,6 +211,7 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
       :model-value="app.model.data.abundanceRef"
       :options="app.model.outputs.abundanceOptions ?? []"
       label="Select dataset"
+      required
       clearable
       @update:model-value="setAbundance"
     >
@@ -204,6 +225,7 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
       :model-value="app.model.data.gateColumnRef"
       :options="app.model.outputs.gateOptions ?? []"
       label="Gate column"
+      required
       clearable
       @update:model-value="setGateColumn"
     >
@@ -231,10 +253,10 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
         </PlCheckbox>
 
         <div style="display: flex; margin-bottom: -15px">
-          {{ gatesOrdered ? "Define gate order" : "Gates to include" }}
+          {{ gatesOrdered ? "Define gate order from low to high" : "Gates to include" }}
           <PlTooltip class="info">
             <template #label>{{
-              gatesOrdered ? "Define gate order" : "Gates to include"
+              gatesOrdered ? "Define gate order from low to high" : "Gates to include"
             }}</template>
             <template #tooltip>
               Remove any value that is not a sort gate — an unsorted input, a specificity or
@@ -245,14 +267,48 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
         <PlElementList v-model:items="app.model.data.gateOrder">
           <template #item-title="{ item }">{{ item }}</template>
         </PlElementList>
+        <PlBtnGhost v-if="gateOrderModified" @click="resetGateOrder">
+          Reset to default
+          <template #append>
+            <PlMaskIcon24 name="reverse" />
+          </template>
+        </PlBtnGhost>
       </PlAccordionSection>
     </PlAccordion>
 
     <!-- What the two facts add up to. Replaces the mode control: it states the consequence
          rather than asking the user to pick it. -->
-    <PlAlert v-if="app.model.outputs.runShape" type="info">
-      {{ app.model.outputs.runShape }}
+    <PlAlert v-if="app.model.outputs.runShape" :type="app.model.outputs.runShape.level">
+      {{ app.model.outputs.runShape.message }}
     </PlAlert>
+
+    <PlAccordion multiple>
+      <PlAccordionSection v-model="armsOpen" label="Arms">
+        <!-- The factor column and its exclusions, together. -->
+        <PlDropdown
+          :model-value="app.model.data.conditionColumnRef"
+          :options="app.model.outputs.conditionOptions ?? []"
+          label="Factor column"
+          required
+          clearable
+          @update:model-value="setConditionColumn"
+        >
+          <template #tooltip>
+            The variable separating your sorts into arms; each level is scored on its own.
+          </template>
+        </PlDropdown>
+
+        <PlDropdownMulti
+          v-model="app.model.data.excludedConditions"
+          :options="conditionValueOptions"
+          label="Exclude factors"
+        >
+          <template #tooltip>
+            Levels to leave out, such as a failed sort; excluded levels produce no results.
+          </template>
+        </PlDropdownMulti>
+      </PlAccordionSection>
+    </PlAccordion>
 
     <PlAccordion multiple>
       <PlAccordionSection v-model="enrichmentOpen" label="Per-Gate Enrichment">
@@ -303,33 +359,6 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
           wild type. The run will succeed and report no baseline. Pick a nucleotide-level dataset,
           or choose another baseline.
         </PlAlert>
-      </PlAccordionSection>
-    </PlAccordion>
-
-    <PlAccordion multiple>
-      <PlAccordionSection v-model="armsOpen" label="Arms">
-        <!-- The factor column and its exclusions, together. -->
-        <PlDropdown
-          :model-value="app.model.data.conditionColumnRef"
-          :options="app.model.outputs.conditionOptions ?? []"
-          label="Factor column"
-          clearable
-          @update:model-value="setConditionColumn"
-        >
-          <template #tooltip>
-            The variable separating your sorts into arms; each level is scored on its own.
-          </template>
-        </PlDropdown>
-
-        <PlDropdownMulti
-          v-model="app.model.data.excludedConditions"
-          :options="conditionValueOptions"
-          label="Exclude factors"
-        >
-          <template #tooltip>
-            Levels to leave out, such as a failed sort; excluded levels produce no results.
-          </template>
-        </PlDropdownMulti>
       </PlAccordionSection>
     </PlAccordion>
 

@@ -451,8 +451,12 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
   .output("runShape", (ctx) => {
     const ordered = ctx.data.gatesOrdered !== false;
     const enrichment = ctx.data.inputGate !== undefined;
+    // Neither fact holds, so this states a setting to fix rather than a result to expect.
     if (!ordered && !enrichment) {
-      return "Order the gates, or name an unsorted input — with neither there is nothing to compute.";
+      return {
+        level: "warn" as const,
+        message: "Order the gates, or name an unsorted input to run the block.",
+      };
     }
 
     const metrics = [
@@ -463,7 +467,10 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
     const input = enrichment ? " and an unsorted input" : "";
     const noun = metrics.length === 1 ? "metric" : "metrics";
 
-    return `With ${gates}${input}, the following ${noun} will be produced: ${metrics.join(", ")}.`;
+    return {
+      level: "info" as const,
+      message: `With ${gates}${input}, the following ${noun} will be produced: ${metrics.join(", ")}.`,
+    };
   })
 
   /** Exposed so the UI can show it as the subtitle field's placeholder. */
