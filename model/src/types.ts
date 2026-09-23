@@ -1,7 +1,10 @@
 import type { GraphMakerState } from "@milaboratories/graph-maker";
 import type { PlDataTableStateV2, PlRef, SUniversalPColumnId } from "@platforma-sdk/model";
 
-/** Which quantity the run is for. Absent means gate ranking, exactly as the computation reads it. */
+/**
+ * One word for what the run did, **derived** by the computation from whether an input was
+ * named. It is a report, never an input — nothing configures a mode.
+ */
 export type RunMode = "gate-ranking" | "enrichment";
 
 /** What a per-gate enrichment is read against. `synonymous` needs the nucleotide grain. */
@@ -32,12 +35,15 @@ export type BlockArgs = {
   /** 7. Absent means the score is computed **uncorrected**, declared on every value. */
   sortFractionColumnRef?: SUniversalPColumnId;
 
-  /** 8. Absent means gate ranking. Set only for an enrichment run. */
-  mode?: RunMode;
   /**
-   * 9. The gate-column value naming the unsorted reference. Required in enrichment mode,
-   * refused outside it, and never a key of `gateRanks` — a gate that referenced itself would
-   * give exactly 1 everywhere.
+   * 8. Whether the gates lie along a binding axis. Absent means they do. False drops the rank
+   * metrics and keeps the enrichment.
+   */
+  gatesOrdered?: boolean;
+  /**
+   * 9. The gate-column value naming the unsorted reference. Optional: naming one is what asks
+   * for the enrichment. Never a key of `gateRanks` — a gate that referenced itself would give
+   * exactly 1 everywhere.
    */
   inputGate?: string;
   /** 10. Absent means report no baseline, which is an answer and not an unset field. */
@@ -63,12 +69,12 @@ export type BlockData = {
   readFloor?: number;
   sortFractionColumnRef?: SUniversalPColumnId;
 
-  // --- The enrichment feature ----------------------------------------------
+  // --- The two facts, plus the baseline -------------------------------------
   //
-  // All four optional with no migration: an existing block reads `undefined`, the args lambda
-  // omits them, and its args bytes are unchanged.
-  /** `undefined` is the gate-ranking run. */
-  mode?: RunMode;
+  // The run is read off these: an input turns the enrichment on, the order turns the rank
+  // metrics on. There is no mode.
+  /** `undefined` means ordered, which is the ordinary case. */
+  gatesOrdered?: boolean;
   /** The gate value serving as the unsorted reference. Only meaningful in enrichment mode. */
   inputGate?: string;
   /** `undefined` reports no baseline. */
@@ -105,6 +111,10 @@ export type BlockData = {
    * writes grid state into nothing and loses it on reload.
    */
   ntResultsTableState: PlDataTableStateV2;
+  /**
+   * The baseline table's grid state. Its own, because that table is keyed on `[parentId]` and
+   * shares no column with either score table.
+   */
   /** One chart state per condition. Which condition is on screen lives in the route instead,
    *  so two clients do not fight over it. */
   distributionGraphStates: Record<string, GraphMakerState>;
@@ -146,6 +156,8 @@ export type GateEnrichment = {
   /** The gate's declared rank, which is also the suffix in the file name. */
   rank: number;
   file: string;
+  /** Whether the file carries the vs-baseline column. It needs a resolved, non-zero level. */
+  hasVsBaseline: boolean;
   variantsEnriched: number;
   /** Null where no baseline was resolved, or where none of its variants survived the floor here. */
   baseline: BaselineSummary | null;
@@ -154,6 +166,12 @@ export type GateEnrichment = {
    * option. Keyed on this block's own zero-based codon offset, NOT the profiler's position
    * axis; one out puts every baseline on the wrong residue and looks plausible.
    */
+  /**
+   * The same baseline per gate, one row per parent, keyed on `[parentId]`. Emitted on every
+   * run: the annotations above can describe one baseline, and a dataset may carry several
+   * parents.
+   */
+  baselineGateFile: string | null;
   baselinePositionFile: string | null;
   /** How many codon positions carried a value, so a thin split is visible without opening it. */
   baselinePositions: number;
@@ -185,6 +203,42 @@ export type CodonSchemeSummary = {
   unreachablePositions: number[];
 };
 
+/**
+ * One parent the run scored. A dataset may carry any number — the profiler takes a FASTA of
+ * them — and every depth is taken within one, so each resolves its own parent row, codon
+ * scheme and baseline.
+ */
+export type ParentSummary = {
+  /** Null for variants the parent link did not place. They are scored among themselves. */
+  parentId: string | null;
+  variants: number;
+  reads: number;
+  parentIdentified: boolean;
+  parentAbsenceReason: string | null;
+  baselineIdentified: boolean;
+  baselineAbsenceReason: string | null;
+  baselineVariants: number;
+  codonScheme: CodonSchemeSummary;
+  positionAlignment: { verified: boolean; reason: string | null; parentId: string | null };
+};
+
+/**
+ * The protein level, where the run could reach it. Emitted beside the measured level rather
+ * than instead of it.
+ *
+ * It carries no baseline band: the synonymous variants are pooled into the parent protein, so
+ * at this grain there is no set left to measure noise from. The band stays on the nucleotide
+ * level, where it was measured.
+ */
+export type RolledSummary = {
+  gateRankMeanFile: string;
+  /** Null outside gate-ranking mode, where `binScore` is not produced. */
+  binScoreFile: string | null;
+  referenceMode: "referenced" | "cancelled" | null;
+  gateEnrichments: GateEnrichment[];
+  variantsScored: number;
+};
+
 /** The manifest's per-condition entry. */
 export type ConditionSummary = {
   /** Verbatim, exactly as it appears in the metadata column. */
@@ -192,6 +246,11 @@ export type ConditionSummary = {
   gateRankMeanFile: string;
   /** Null where the column is not produced at this condition. */
   binScoreFile: string | null;
+  /**
+   * The noise band on `binScore`, one row per parent. Gate-ranking mode only — the score is
+   * per condition there, so its baseline is one number rather than one per gate.
+   */
+  binScoreBaselineFile: string | null;
   readDistributionFile: string;
   /** Null where `binScore` is not produced. */
   referenceMode: "referenced" | "cancelled" | null;
@@ -201,6 +260,8 @@ export type ConditionSummary = {
   inputDepth: number | null;
   /** Empty outside enrichment mode, and where the condition had no usable reference. */
   gateEnrichments: GateEnrichment[];
+  /** The protein level, or null where the run could not reach it. */
+  rolled: RolledSummary | null;
   variantsScored: number;
   /** How many of `variantsScored` the distribution draws. Shown in that view's title, where a
    *  truncated chart is otherwise indistinguishable from a complete one. */
@@ -225,6 +286,16 @@ export type RunManifest = {
   baselineVariants: number;
   /** Inferred once for the run. */
   codonScheme: CodonSchemeSummary;
+  /**
+   * Every parent the run scored. One entry is the ordinary case; the top-level fields above
+   * are that parent's. With several, those fields are the conjunction and these carry each.
+   */
+  parents: ParentSummary[];
+  /**
+   * The gate ladder, already rendered: `"1 = NEG, 2 = MP, ..."`. Ordered weakest first, so a
+   * consumer can say what a mean bin of 2.6 means. Empty where the gates carry no order.
+   */
+  gateLadder: string;
   /** Retained conditions only; empty on a run with no replicates. */
   pooledGroups: PooledGroup[];
   conditions: ConditionSummary[];

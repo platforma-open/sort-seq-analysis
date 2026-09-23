@@ -49,6 +49,21 @@ export const FacsBin = {
    */
   GateDomain: GATE,
   ReferenceModeDomain: "pl7.app/facsBin/referenceMode",
+  /**
+   * The per-gate baseline, keyed on `[parentId]` rather than the variant axis — one row per
+   * parent, so a dataset carrying several reports each. Emitted on every run.
+   */
+  /** Per parent, for the whole run. Emitted in every mode, so the parents are always visible. */
+  ParentVariants: "pl7.app/facsBin/parentVariants",
+  ParentReads: "pl7.app/facsBin/parentReads",
+  /** The enrichment divided by its own parent's baseline. 1.0 is a variant of no effect. */
+  GateEnrichmentVsBaseline: "pl7.app/facsBin/gateEnrichmentVsBaseline",
+  /** The noise band on `binScore`, per condition. Gate-ranking mode only. */
+  BinScoreBaselineLevel: "pl7.app/facsBin/binScoreBaselineLevel",
+  GateBaselineLevel: "pl7.app/facsBin/gateBaselineLevel",
+  GateBaselineP5: "pl7.app/facsBin/gateBaselineP5",
+  GateBaselineP95: "pl7.app/facsBin/gateBaselineP95",
+  GateBaselineVariants: "pl7.app/facsBin/gateBaselineVariants",
   SortYieldCorrectedAnnotation: "pl7.app/facsBin/sortYieldCorrected",
   /** The baseline as measured at this column's gate. Absent where none was resolved. */
   BaselineLevelAnnotation: "pl7.app/facsBin/baselineLevel",

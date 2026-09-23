@@ -40,9 +40,8 @@ export const blockDataModel = new DataModelBuilder({ kind })
     gateColumnLabel: params?.gateColumnLabel,
     conditionValues: params?.conditionValues ?? [],
 
-    // Not init params — see the kind. The enrichment fields are absent rather than defaulted:
-    // `undefined` mode is the gate-ranking run everywhere, so old and new blocks produce the
-    // same args bytes.
+    // Not init params — see the kind. The two facts and the baseline are absent rather than
+    // defaulted: an absent input means no enrichment, and an absent order flag means ordered.
     excludedConditions: [],
     customBlockLabel: "",
     resultsTableState: createPlDataTableStateV2(),

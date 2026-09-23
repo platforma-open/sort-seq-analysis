@@ -104,6 +104,23 @@ function labelFor(sampleId: string): string {
   return sampleLabels.value?.[sampleId] ?? sampleId;
 }
 
+/**
+ * The parents the run scored, or `undefined` where there was one — the ordinary case raises
+ * nothing. Shown because every depth is taken within a parent, so the number of them changes
+ * what each score is relative to.
+ */
+const parents = computed(() => {
+  const rows = manifest.value?.parents;
+  if (!rows || rows.length < 2) return undefined;
+  return rows.map((row) => ({
+    key: row.parentId ?? "(unplaced)",
+    label: row.parentId ?? "not placed under any parent",
+    variants: row.variants,
+    reads: row.reads,
+    identified: row.parentIdentified,
+  }));
+});
+
 /** The pooled groups, or `undefined` where nothing was pooled — see `parentAbsence` on why. */
 const pooling = computed(() => {
   const groups = manifest.value?.pooledGroups;
@@ -172,6 +189,20 @@ function binScoreCell(entry: {
         <template #title>No baseline was produced</template>
         {{ baselineAbsence }} The enrichment values are unaffected — they are still ratios against
         the input, with no baseline level marked on them.
+      </PlAlert>
+
+      <PlAlert v-if="parents" type="info">
+        <template #title>{{ parents.length }} parents in this dataset</template>
+        Every depth is taken within a parent, so a variant's score is relative to its own reference
+        and not to the other libraries in the same run.
+        <ul>
+          <li v-for="row in parents" :key="row.key">
+            {{ row.label }} — {{ row.variants }} variant(s), {{ row.reads }} read(s)<template
+              v-if="!row.identified"
+              >, no parent row identified</template
+            >
+          </li>
+        </ul>
       </PlAlert>
 
       <PlAlert v-if="inputDepths" type="info">

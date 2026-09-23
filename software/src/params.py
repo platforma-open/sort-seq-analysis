@@ -9,9 +9,9 @@ The shape below is the workflow's side of the interface:
     excludedConditions  condition values to drop; empty where none are excluded
     readFloor           a non-negative integer, or null for no floor
     sortFractionColumn  the reads-table column carrying frac_cb, or null for uncorrected
-    mode                "gate-ranking" or "enrichment"; absent means gate-ranking
-    inputGate           the gate value naming the unsorted reference. Enrichment mode only,
-                        and required there.
+    gatesOrdered        whether the gates lie along a binding axis; absent means they do
+    inputGate           the gate value naming the unsorted reference; absent means no
+                        enrichment
     baseline            "wild-type", "synonymous" or "sequence"; null for no baseline
     baselineSequence    the variant key the "sequence" baseline names; null otherwise
 
@@ -34,8 +34,6 @@ from pathlib import Path
 from constants import (
     BASELINE_OPTIONS,
     BASELINE_SEQUENCE,
-    RUN_MODE_ENRICHMENT,
-    RUN_MODE_GATE_RANKING,
 )
 
 _REQUIRED_FIELDS = frozenset({"gateRanks"})
@@ -44,7 +42,7 @@ _OPTIONAL_FIELDS = frozenset(
         "excludedConditions",
         "readFloor",
         "sortFractionColumn",
-        "mode",
+        "gatesOrdered",
         "inputGate",
         "baseline",
         "baselineSequence",
@@ -52,7 +50,6 @@ _OPTIONAL_FIELDS = frozenset(
 )
 _KNOWN_FIELDS = _REQUIRED_FIELDS | _OPTIONAL_FIELDS
 
-_RUN_MODES = frozenset({RUN_MODE_GATE_RANKING, RUN_MODE_ENRICHMENT})
 
 
 @dataclass(frozen=True)
@@ -63,21 +60,33 @@ class Params:
     excluded_conditions: frozenset[str]
     read_floor: int | None
     sort_fraction_column: str | None
-    mode: str
+    gates_ordered: bool
     input_gate: str | None
     baseline: str | None
     baseline_sequence: str | None
 
     @property
     def scores_enrichment(self) -> bool:
-        """Whether this run produces a per-gate enrichment. The single place the mode token
-        becomes a behaviour, so a third mode lands here and not in five branches."""
-        return self.mode == RUN_MODE_ENRICHMENT
+        """Whether this run produces a per-gate enrichment.
+
+        Read off the data, not off a setting: an enrichment needs a reference, so naming one is
+        the whole of what turns it on.
+        """
+        return self.input_gate is not None
+
+    @property
+    def scores_gate_rank(self) -> bool:
+        """Whether this run produces the rank metrics.
+
+        The other fact. Ranks only mean something along a binding axis, so an unordered gate set
+        gets the enrichment and nothing that claims an order.
+        """
+        return self.gates_ordered
 
     @property
     def sort_yield_corrected(self) -> bool:
         """Whether this run applies the sort-yield correction. A property of the run, never
-        of a condition — no run mixes modes.
+        of a condition.
 
         This is the intent; the manifest reports the correction as applied.
         """
@@ -104,8 +113,13 @@ def load_params(path: Path) -> Params:
         raise ValueError(f"parameter document carries unknown field(s): {', '.join(unknown)}")
 
     gate_ranks = _parse_gate_ranks(raw["gateRanks"])
-    mode = _parse_mode(raw.get("mode"))
-    input_gate = _parse_input_gate(raw.get("inputGate"), mode, gate_ranks)
+    gates_ordered = _parse_gates_ordered(raw.get("gatesOrdered"))
+    input_gate = _parse_input_gate(raw.get("inputGate"), gate_ranks)
+    if not gates_ordered and input_gate is None:
+        raise ValueError(
+            "unordered gates and no inputGate leave nothing to compute: "
+            "order the gates, or name an unsorted input"
+        )
     baseline = _parse_baseline(raw.get("baseline"))
 
     return Params(
@@ -113,7 +127,7 @@ def load_params(path: Path) -> Params:
         excluded_conditions=_parse_excluded(raw.get("excludedConditions", [])),
         read_floor=_parse_read_floor(raw.get("readFloor")),
         sort_fraction_column=_parse_sort_fraction_column(raw.get("sortFractionColumn")),
-        mode=mode,
+        gates_ordered=gates_ordered,
         input_gate=input_gate,
         baseline=baseline,
         baseline_sequence=_parse_baseline_sequence(raw.get("baselineSequence"), baseline),
@@ -158,28 +172,23 @@ def _parse_sort_fraction_column(value: object) -> str | None:
     return value
 
 
-def _parse_mode(value: object) -> str:
-    # Absent is the gate-ranking run — a real answer, not a compatibility shim.
+def _parse_gates_ordered(value: object) -> bool:
+    """Whether the gates lie along a binding axis. Absent means they do, which is every
+    document written before the flag existed."""
     if value is None:
-        return RUN_MODE_GATE_RANKING
-    if value not in _RUN_MODES:
-        raise ValueError(f"mode must be one of {sorted(_RUN_MODES)} or null, got {value!r}")
-    return str(value)
+        return True
+    if not isinstance(value, bool):
+        raise ValueError(f"gatesOrdered must be a boolean or null, got {value!r}")
+    return value
 
 
-def _parse_input_gate(value: object, mode: str, gate_ranks: dict[str, int]) -> str | None:
-    """The reference gate. Required in enrichment mode, refused outside it.
-
-    Refused rather than ignored: silently dropping it would score the run against nothing
-    while the settings said otherwise.
-    """
-    if mode != RUN_MODE_ENRICHMENT:
-        if value is not None:
-            raise ValueError(f"inputGate is meaningful only in {RUN_MODE_ENRICHMENT!r} mode, got {value!r}")
+def _parse_input_gate(value: object, gate_ranks: dict[str, int]) -> str | None:
+    """The reference gate. Optional: naming one is what turns the enrichment on."""
+    if value is None:
         return None
 
     if not isinstance(value, str) or not value:
-        raise ValueError(f"{RUN_MODE_ENRICHMENT!r} mode requires inputGate to be a non-empty string, got {value!r}")
+        raise ValueError(f"inputGate must be a non-empty string or null, got {value!r}")
 
     # A gate cannot also be its own reference: every enrichment there would be exactly 1.
     if value in gate_ranks:

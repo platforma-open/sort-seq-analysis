@@ -13,6 +13,8 @@ from pathlib import Path
 import polars as pl
 from constants import (
     BASELINE_FILE_PATTERN,
+    BASELINE_BIN_SCORE_FILE_PATTERN,
+    BASELINE_GATE_FILE_PATTERN,
     COL_CONDITION,
     COL_GATE,
     COL_MUTATION_COUNT,
@@ -41,12 +43,23 @@ def read_reads(path: Path, sort_fraction_column: str | None) -> pl.DataFrame:
     `reads` is Int64 deliberately: a fractional value means the workflow exported normalized
     abundance instead of read counts, and failing loudly is right.
     """
-    overrides: dict[str, pl.DataType] = {name: pl.String() for name in _STRING_COLUMNS}
-    overrides[COL_READS] = pl.Int64()
+    wanted: dict[str, pl.DataType] = {name: pl.String() for name in _STRING_COLUMNS}
+    wanted[COL_READS] = pl.Int64()
     if sort_fraction_column is not None:
-        overrides[sort_fraction_column] = pl.Float64()
+        wanted[sort_fraction_column] = pl.Float64()
+
+    # Overrides are narrowed to columns the file actually has. A `schema_overrides` dict whose
+    # length happens to equal the file's column count is applied BY POSITION, so one override
+    # naming an absent column silently renames the last real one.
+    # `infer_schema=False` is required, not tidiness: the probe would otherwise infer types
+    # from the first chunk and refuse the file it is only being asked to name the columns of —
+    # a `condition` of 5.5 and 7.5 infers as float and then chokes on the input arm's `NA`.
+    present = pl.read_csv(path, separator="\t", n_rows=0, infer_schema=False).columns
+    overrides = {name: dtype for name, dtype in wanted.items() if name in present}
 
     frame = pl.read_csv(path, separator="\t", schema_overrides=overrides)
+    # The sort-fraction column is deliberately not required here: `validate` refuses its
+    # absence with a message naming the column, and owns that rule.
     _require_columns(frame, path, [COL_SAMPLE, COL_VARIANT, COL_READS, COL_CONDITION, COL_GATE])
     return frame
 
@@ -93,6 +106,30 @@ def read_positions(path: Path | None) -> pl.DataFrame | None:
     return frame
 
 
+def read_parents(path: Path | None) -> pl.DataFrame | None:
+    """Variant -> the parent it was aligned to, or None where the linker did not resolve.
+
+    A variant listed under more than one parent is dropped: the aligner assigns a sequence to
+    one parent, so two rows mean two profiler runs reached one bundle, and picking either would
+    scope that variant's depths to a library it is not part of.
+    """
+    if path is None:
+        return None
+    frame = pl.read_csv(
+        path,
+        separator="\t",
+        schema_overrides={COL_VARIANT: pl.String(), COL_PARENT_ID: pl.String()},
+    )
+    _require_columns(frame, path, [COL_VARIANT, COL_PARENT_ID])
+    mapping = frame.select(COL_VARIANT, COL_PARENT_ID).unique()
+    ambiguous = (
+        mapping.group_by(COL_VARIANT).agg(pl.len().alias("_n")).filter(pl.col("_n") > 1)
+    )
+    if ambiguous.height > 0:
+        mapping = mapping.join(ambiguous.select(COL_VARIANT), on=COL_VARIANT, how="anti")
+    return mapping.sort(COL_VARIANT)
+
+
 def _require_columns(frame: pl.DataFrame, path: Path, required: list[str]) -> None:
     missing = [name for name in required if name not in frame.columns]
     if missing:
@@ -126,6 +163,16 @@ def baseline_file_name(index: int, rank: int) -> str:
     """The per-position baseline for one (condition, gate). Its own prefix, because it is the
     only output not keyed on the variant axis — see `BASELINE_FILE_PATTERN`."""
     return BASELINE_FILE_PATTERN.format(index=index, rank=rank)
+
+
+def baseline_gate_file_name(index: int, rank: int) -> str:
+    """The per-gate baseline for one (condition, gate), one row per parent, keyed [parentId]."""
+    return BASELINE_GATE_FILE_PATTERN.format(index=index, rank=rank)
+
+
+def baseline_bin_score_file_name(index: int) -> str:
+    """The baseline of `binScore` for one condition, one row per parent."""
+    return BASELINE_BIN_SCORE_FILE_PATTERN.format(index=index)
 
 
 def distribution_file_name(index: int) -> str:

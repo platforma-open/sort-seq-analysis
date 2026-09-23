@@ -79,11 +79,15 @@ export function settingsIssues(data: BlockData): string[] {
     issues.push("The read-count floor cannot be negative");
   }
 
-  // Enrichment without a reference: refused here rather than after the run starts.
-  if (data.mode === "enrichment") {
-    if (data.inputGate === undefined) {
-      issues.push("Select the input sample's gate value");
-    } else if (data.gateOrder.includes(data.inputGate)) {
+  // Neither fact holds, so there is nothing to compute.
+  if (data.gatesOrdered === false && data.inputGate === undefined) {
+    issues.push(
+      "Order the gates, or name an unsorted input — with neither there is nothing to compute",
+    );
+  }
+
+  if (data.inputGate !== undefined) {
+    if (data.gateOrder.includes(data.inputGate)) {
       // A gate that referenced itself would give exactly 1 everywhere. Reachable by
       // reordering after the pick, so the option list alone is not enough.
       issues.push(
@@ -94,8 +98,9 @@ export function settingsIssues(data: BlockData): string[] {
     }
   }
 
-  // The other two baseline options name their variants from the data.
-  if (data.baseline === "sequence" && !data.baselineSequence) {
+  // The other two baseline options name their variants from the data. Only checked in
+  // enrichment mode, where `sequence` is the only mode that projects it.
+  if (data.inputGate !== undefined && data.baseline === "sequence" && !data.baselineSequence) {
     issues.push("Enter the nucleotide sequence's variant key to use as the baseline");
   }
 
@@ -150,13 +155,23 @@ function buildScoresTable(ctx: any, alphabet: string) {
   const own = all.filter((column) => column.spec.domain?.[AlphabetDomain] === alphabet);
   if (own.length === 0) return undefined;
 
-  const anchor = own
-    .filter((column) => column.spec.name === FacsBin.GateRankMean)
-    .sort((a, b) =>
-      (a.spec.domain?.[FacsBin.ConditionDomain] ?? "").localeCompare(
-        b.spec.domain?.[FacsBin.ConditionDomain] ?? "",
-      ),
-    )[0];
+  // Unordered gates produce no `gateRankMean`, so the enrichment carries the anchor there.
+  // Both are keyed on the variant axes, so the key shape below is the same either way.
+  const pickAnchor = (name: string) =>
+    own
+      .filter((column) => column.spec.name === name)
+      .sort((a, b) =>
+        (
+          (a.spec.domain?.[FacsBin.ConditionDomain] ?? "") +
+          "\0" +
+          (a.spec.domain?.[FacsBin.GateDomain] ?? "")
+        ).localeCompare(
+          (b.spec.domain?.[FacsBin.ConditionDomain] ?? "") +
+            "\0" +
+            (b.spec.domain?.[FacsBin.GateDomain] ?? ""),
+        ),
+      )[0];
+  const anchor = pickAnchor(FacsBin.GateRankMean) ?? pickAnchor(FacsBin.GateEnrichment);
   if (!anchor) return undefined;
 
   // Primary columns, so they are always shown and never compete with a pool namesake.
@@ -202,6 +217,7 @@ function buildScoresTable(ctx: any, alphabet: string) {
         { match: { name: exact(FacsBin.GateRankMean) }, visibility: "default" },
         { match: { name: exact(FacsBin.BinScore) }, visibility: "default" },
         { match: { name: exact(FacsBin.GateEnrichment) }, visibility: "default" },
+        { match: { name: exact(FacsBin.GateEnrichmentVsBaseline) }, visibility: "default" },
         { match: { name: exact(PColumnName.VariantLabel) }, visibility: "default" },
         { match: { name: exact(PColumnName.Mutations) }, visibility: "default" },
         { match: { name: ".*" }, visibility: "optional" },
@@ -216,7 +232,10 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
     const issues = settingsIssues(data);
     if (issues.length > 0) throw new Error(issues.join("; "));
 
-    const enrichment = data.mode === "enrichment";
+    // Two facts, not a mode. An enrichment needs a reference, so naming one is what asks for
+    // it; ranks need an order, so the toggle is what asks for those.
+    const enrichment = data.inputGate !== undefined;
+    const ordered = data.gatesOrdered !== false;
 
     return {
       abundanceRef: data.abundanceRef!,
@@ -236,11 +255,14 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
       sortFractionColumnRef: data.sortFractionColumnRef,
       // Projected only when in use: four `undefined`s drop out of the args JSON, so an
       // existing block's bytes are unchanged and no instance goes stale on upgrade.
-      mode: enrichment ? "enrichment" : undefined,
-      inputGate: enrichment ? data.inputGate : undefined,
-      // Suppressed outside enrichment mode: it changes nothing there, and carrying it would
-      // fire the staleness gate on an edit with no effect.
-      baseline: enrichment ? data.baseline : undefined,
+      inputGate: data.inputGate,
+      // Projected only when false, so an ordered run's bytes are unchanged.
+      gatesOrdered: ordered ? undefined : false,
+      // Offered in both modes. Gate-ranking takes only the synonymous option: the other two
+      // name a single variant, which just repeats the reference `binScore` already subtracts.
+      // A gate-ranking block made before this projected nothing here, and still does unless
+      // the user picks synonymous, so no instance goes stale.
+      baseline: enrichment || data.baseline === "synonymous" ? data.baseline : undefined,
       baselineSequence:
         enrichment && data.baseline === "sequence" ? data.baselineSequence : undefined,
     };
@@ -403,6 +425,32 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
 
   /** Why the block is not runnable, in the user's words — the platform only says "incomplete". */
   .output("settingsIssues", (ctx) => settingsIssues(ctx.data))
+
+  /**
+   * What this configuration will produce, in the user's words. It replaces the mode control:
+   * the two facts decide the run, and this states the consequence rather than asking for it.
+   */
+  /**
+   * What this configuration will produce, in the user's words. It replaces the mode control:
+   * the two facts decide the run, and this states the consequence rather than asking for it.
+   */
+  .output("runShape", (ctx) => {
+    const ordered = ctx.data.gatesOrdered !== false;
+    const enrichment = ctx.data.inputGate !== undefined;
+    if (!ordered && !enrichment) {
+      return "Order the gates, or name an unsorted input — with neither there is nothing to compute.";
+    }
+
+    const metrics = [
+      ...(ordered ? ["Mean bin", "Mean bin vs parent"] : []),
+      ...(enrichment ? ["Enrichment per gate"] : []),
+    ];
+    const gates = ordered ? "ordered gates" : "unordered gates";
+    const input = enrichment ? " and an unsorted input" : "";
+    const noun = metrics.length === 1 ? "metric" : "metrics";
+
+    return `With ${gates}${input}, the following ${noun} will be produced: ${metrics.join(", ")}.`;
+  })
 
   /** Exposed so the UI can show it as the subtitle field's placeholder. */
   .output("defaultBlockLabel", (ctx) => deriveBlockLabel(ctx.data))

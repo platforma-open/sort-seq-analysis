@@ -37,10 +37,13 @@ from main import main
 REL = 1e-12
 
 
-def invoke(tmp_path, reads, variants=None, **param_kwargs):
+def invoke(tmp_path, reads, variants=None, parents=None, **param_kwargs):
     """Run the entrypoint the way the workflow does and return (exit code, out_dir, manifest)."""
     # Tests that invoke twice pass a subdirectory, so that the two runs cannot share files.
     tmp_path.mkdir(parents=True, exist_ok=True)
+    # The workflow exports no parent column on the reads table; it rides in its own file.
+    if "parentId" in reads.columns:
+        reads = reads.drop("parentId")
     reads_path = write_tsv(reads, tmp_path / "reads.tsv")
     params_path = write_params(tmp_path / "params.json", **param_kwargs)
     out_dir = tmp_path / "out"
@@ -48,6 +51,8 @@ def invoke(tmp_path, reads, variants=None, **param_kwargs):
     argv = ["--reads", str(reads_path), "--params", str(params_path), "--out-dir", str(out_dir)]
     if variants is not None:
         argv += ["--variants", str(write_tsv(variants, tmp_path / "variants.tsv"))]
+    if parents is not None:
+        argv += ["--parents", str(write_tsv(parents, tmp_path / "parents.tsv"))]
 
     code = main(argv)
     manifest_path = out_dir / "manifest.json"
@@ -277,6 +282,7 @@ def test_replicates_in_an_unselected_gate_do_not_fail_the_run(tmp_path):
                     "reads": [5],
                     "condition": ["pH7"],
                     "gate": ["input"],
+                    "parentId": [""],
                 },
                 schema_overrides={"reads": pl.Int64},
             ),
@@ -546,7 +552,6 @@ def test_enrichment_run_emits_one_file_per_gate_with_its_baseline(tmp_path):
         reads_frame(SYNONYMOUS_ROWS),
         variants_frame(SYNONYMOUS_MUTATION_COUNTS, SYNONYMOUS_SEQUENCES),
         gate_ranks=SYNONYMOUS_GATE_RANKS,
-        mode=RUN_MODE_ENRICHMENT,
         input_gate=INPUT_GATE,
         baseline=BASELINE_SYNONYMOUS,
     )
@@ -581,7 +586,6 @@ def test_the_enrichment_file_carries_both_read_counts(tmp_path):
         reads_frame(SYNONYMOUS_ROWS),
         variants_frame(SYNONYMOUS_MUTATION_COUNTS, SYNONYMOUS_SEQUENCES),
         gate_ranks=SYNONYMOUS_GATE_RANKS,
-        mode=RUN_MODE_ENRICHMENT,
         input_gate=INPUT_GATE,
         baseline=BASELINE_SYNONYMOUS,
     )
@@ -589,29 +593,36 @@ def test_the_enrichment_file_carries_both_read_counts(tmp_path):
     name = manifest["conditions"][0]["gateEnrichments"][0]["file"]
     frame = pl.read_csv(out_dir / name, separator="\t", schema_overrides={"variantKey": pl.String})
 
-    assert frame.columns == ["variantKey", "gateEnrichment", "gateReads", "inputReads"]
+    # The vs-baseline column rides along where a baseline resolved, which it does here.
+    assert frame.columns[:4] == ["variantKey", "gateEnrichment", "gateReads", "inputReads"]
     row = frame.filter(pl.col("variantKey") == "W5").to_dicts()[0]
     assert (row["gateReads"], row["inputReads"]) == (200, 100)
 
 
-def test_enrichment_mode_does_not_emit_bin_score(tmp_path):
-    """Open decision 3. The baseline references the enrichment scale; binScore referencing
-    the parent on the rank scale would be a second, disagreeing reference on one run."""
+def test_ordered_gates_with_an_input_emit_both_families(tmp_path):
+    """Two facts, not a mode. Ordered gates give the rank metrics, and an input gives the
+    enrichment — naming an input does not take the rank metrics away.
+
+    They are not rival references: the baseline references the enrichment, the parent
+    references the mean bin. Two quantities, two scales, one reference each.
+    """
     _, _, manifest = invoke(
         tmp_path,
         reads_frame(SYNONYMOUS_ROWS),
         variants_frame(SYNONYMOUS_MUTATION_COUNTS, SYNONYMOUS_SEQUENCES),
         gate_ranks=SYNONYMOUS_GATE_RANKS,
-        mode=RUN_MODE_ENRICHMENT,
         input_gate=INPUT_GATE,
         baseline=BASELINE_SYNONYMOUS,
     )
 
     entry = manifest["conditions"][0]
-    assert entry["binScoreFile"] is None
-    assert entry["referenceMode"] is None
-    # Open decision 1: the rank still runs alongside, so the run is not made poorer.
+    assert manifest["gatesOrdered"] is True
+    assert manifest["scoresEnrichment"] is True
     assert entry["gateRankMeanFile"] is not None
+    assert entry["binScoreFile"] is not None
+    assert len(entry["gateEnrichments"]) > 0
+    # The reference mode is claimed now, because binScore is produced here.
+    assert entry["referenceMode"] == "referenced"
 
 
 def test_the_input_is_not_reported_as_a_collected_gate(tmp_path):
@@ -622,7 +633,6 @@ def test_the_input_is_not_reported_as_a_collected_gate(tmp_path):
         reads_frame(SYNONYMOUS_ROWS),
         variants_frame(SYNONYMOUS_MUTATION_COUNTS, SYNONYMOUS_SEQUENCES),
         gate_ranks=SYNONYMOUS_GATE_RANKS,
-        mode=RUN_MODE_ENRICHMENT,
         input_gate=INPUT_GATE,
         baseline=BASELINE_SYNONYMOUS,
     )
@@ -640,7 +650,6 @@ def test_a_condition_whose_input_collected_nothing_still_scores_its_rank(tmp_pat
         reads_frame(rows),
         variants_frame(SYNONYMOUS_MUTATION_COUNTS, SYNONYMOUS_SEQUENCES),
         gate_ranks=SYNONYMOUS_GATE_RANKS,
-        mode=RUN_MODE_ENRICHMENT,
         input_gate=INPUT_GATE,
         baseline=BASELINE_SYNONYMOUS,
     )
@@ -680,7 +689,6 @@ def test_an_input_collected_twice_is_pooled_like_any_other_gate(tmp_path):
         reads,
         variants_frame(SYNONYMOUS_MUTATION_COUNTS, SYNONYMOUS_SEQUENCES),
         gate_ranks=SYNONYMOUS_GATE_RANKS,
-        mode=RUN_MODE_ENRICHMENT,
         input_gate=INPUT_GATE,
         baseline=BASELINE_SYNONYMOUS,
     )
@@ -695,3 +703,217 @@ def test_an_input_collected_twice_is_pooled_like_any_other_gate(tmp_path):
         SYNONYMOUS_ENRICHMENTS, rel=REL
     )
     assert gate["baseline"]["level"] == pytest.approx(SYNONYMOUS_BASELINE_LEVEL, rel=REL)
+
+
+# ---------------------------------------------------------------------------
+# Many parents in one dataset.
+# ---------------------------------------------------------------------------
+
+
+def test_a_two_parent_run_scores_each_parent_against_its_own_depths(tmp_path):
+    """End to end. The two parents sort in opposite directions, so pooling their depths would
+    move every score; scoped, each variant sits at the midpoint of its own ladder."""
+    rows = [
+        ("g1", "a1", 10), ("g1", "a2", 10), ("g1", "b1", 80), ("g1", "b2", 80),
+        ("g2", "a1", 40), ("g2", "a2", 40), ("g2", "b1", 10), ("g2", "b2", 10),
+    ]
+    mapping = {"a1": "A", "a2": "A", "b1": "B", "b2": "B"}
+    parents = pl.DataFrame(
+        {"variantKey": sorted(mapping), "parentId": [mapping[k] for k in sorted(mapping)]}
+    )
+
+    code, out_dir, manifest = invoke(
+        tmp_path,
+        reads_frame(rows, parents=mapping),
+        parents=parents,
+        gate_ranks={"g1": 1, "g2": 2},
+    )
+
+    assert code == 0
+    assert [(e["parentId"], e["variants"], e["reads"]) for e in manifest["parents"]] == [
+        ("A", 2, 100),
+        ("B", 2, 180),
+    ]
+    entry = manifest["conditions"][0]
+    means = read_scores(out_dir, entry["gateRankMeanFile"], "gateRankMean")
+    assert means == pytest.approx({"a1": 1.5, "a2": 1.5, "b1": 1.5, "b2": 1.5}, rel=REL)
+
+
+def test_the_same_run_without_the_parents_table_is_distorted(tmp_path):
+    """The bug the table closes, end to end: identical reads, no parent placement, and the four
+    means spread from 1.18 to 1.88 instead of sitting at 1.5."""
+    rows = [
+        ("g1", "a1", 10), ("g1", "a2", 10), ("g1", "b1", 80), ("g1", "b2", 80),
+        ("g2", "a1", 40), ("g2", "a2", 40), ("g2", "b1", 10), ("g2", "b2", 10),
+    ]
+
+    code, out_dir, manifest = invoke(tmp_path, reads_frame(rows), gate_ranks={"g1": 1, "g2": 2})
+
+    assert code == 0
+    assert [entry["parentId"] for entry in manifest["parents"]] == [None]
+    means = read_scores(out_dir, manifest["conditions"][0]["gateRankMeanFile"], "gateRankMean")
+    assert means["a1"] > 1.8
+    assert means["b1"] < 1.2
+
+
+def test_the_parent_summary_is_written_in_gate_ranking_mode(tmp_path):
+    """The baseline exists only on an enrichment run, so gating the parents table on it left a
+    gate-ranking run with no way to see its parents at all. The summary is written in every
+    mode."""
+    rows = [("g1", "a1", 10), ("g1", "b1", 80), ("g2", "a1", 40), ("g2", "b1", 10)]
+    mapping = {"a1": "A", "b1": "B"}
+    parents = pl.DataFrame(
+        {"variantKey": sorted(mapping), "parentId": [mapping[k] for k in sorted(mapping)]}
+    )
+
+    code, out_dir, manifest = invoke(
+        tmp_path, reads_frame(rows, parents=mapping), parents=parents, gate_ranks={"g1": 1, "g2": 2}
+    )
+
+    assert code == 0
+    assert manifest["mode"] == "gate-ranking"
+    assert manifest["parentSummaryFile"] is not None
+    summary = pl.read_csv(out_dir / manifest["parentSummaryFile"], separator="\t")
+    assert summary["parentId"].to_list() == ["A", "B"]
+    assert summary["parentVariants"].to_list() == [1, 1]
+
+
+def test_no_parent_link_writes_no_summary(tmp_path):
+    """Nothing to key a column on, so the table is absent rather than showing one blank row."""
+    code, _, manifest = invoke(tmp_path, reads_frame(BASE_ROWS))
+
+    assert code == 0
+    assert manifest["parentSummaryFile"] is None
+
+
+def test_enrichment_carries_a_vs_baseline_column(tmp_path):
+    """The enrichment against its own parent's baseline, so 1.0 means no effect on every gate.
+    W4 enriches at 1.5, which is exactly the synonymous level, so it must read 1.0."""
+    code, out_dir, manifest = invoke(
+        tmp_path,
+        reads_frame(SYNONYMOUS_ROWS),
+        variants_frame(SYNONYMOUS_MUTATION_COUNTS, sequences=SYNONYMOUS_SEQUENCES),
+        gate_ranks=SYNONYMOUS_GATE_RANKS,
+        input_gate=INPUT_GATE,
+        baseline=BASELINE_SYNONYMOUS,
+    )
+
+    assert code == 0
+    gate = manifest["conditions"][0]["gateEnrichments"][0]
+    frame = pl.read_csv(out_dir / gate["file"], separator="\t", schema_overrides={"variantKey": pl.String})
+    assert "gateEnrichmentVsBaseline" in frame.columns
+
+    vs = dict(zip(frame["variantKey"].to_list(), frame["gateEnrichmentVsBaseline"].to_list()))
+    raw = dict(zip(frame["variantKey"].to_list(), frame["gateEnrichment"].to_list()))
+    level = gate["baseline"]["level"]
+    assert vs["W4"] == pytest.approx(raw["W4"] / level, rel=REL)
+    # W4's enrichment is the median of the set, so it sits exactly on no change.
+    assert vs["W4"] == pytest.approx(1.0, rel=REL)
+
+
+def test_gate_ranking_emits_a_bin_score_baseline(tmp_path):
+    """The noise band on `binScore`, which gate-ranking mode had no way to report."""
+    code, out_dir, manifest = invoke(
+        tmp_path,
+        reads_frame(SYNONYMOUS_GATE_ROWS),
+        variants_frame(SYNONYMOUS_MUTATION_COUNTS, sequences=SYNONYMOUS_SEQUENCES),
+        gate_ranks=SYNONYMOUS_GATE_RANKS,
+        baseline=BASELINE_SYNONYMOUS,
+    )
+
+    assert code == 0
+    entry = manifest["conditions"][0]
+    assert manifest["mode"] == "gate-ranking"
+    assert entry["binScoreBaselineFile"] is not None
+
+    frame = pl.read_csv(out_dir / entry["binScoreBaselineFile"], separator="\t")
+    assert frame.columns[:2] == ["parentId", "baselineLevel"]
+    assert "baselineP5" in frame.columns and "baselineP95" in frame.columns
+    assert frame["baselineVariants"].to_list() == [5]
+
+
+def test_both_quantities_get_their_own_band(tmp_path):
+    """An ordered run with an input produces two scores, so the baseline reports a band for
+    each: one on the enrichment scale, per gate, and one on the rank scale, per condition."""
+    _, _, manifest = invoke(
+        tmp_path,
+        reads_frame(SYNONYMOUS_ROWS),
+        variants_frame(SYNONYMOUS_MUTATION_COUNTS, sequences=SYNONYMOUS_SEQUENCES),
+        gate_ranks=SYNONYMOUS_GATE_RANKS,
+        input_gate=INPUT_GATE,
+        baseline=BASELINE_SYNONYMOUS,
+    )
+    entry = manifest["conditions"][0]
+    assert entry["binScoreBaselineFile"] is not None
+    assert entry["gateEnrichments"][0]["baselineGateFile"] is not None
+
+
+def test_unordered_gates_emit_enrichment_and_no_rank_metrics(tmp_path):
+    """No order, so nothing that claims one. The enrichment is unaffected: it never used a
+    rank."""
+    _, _, manifest = invoke(
+        tmp_path,
+        reads_frame(SYNONYMOUS_ROWS),
+        variants_frame(SYNONYMOUS_MUTATION_COUNTS, sequences=SYNONYMOUS_SEQUENCES),
+        gate_ranks=SYNONYMOUS_GATE_RANKS,
+        input_gate=INPUT_GATE,
+        gates_ordered=False,
+    )
+
+    entry = manifest["conditions"][0]
+    assert manifest["gatesOrdered"] is False
+    assert entry["gateRankMeanFile"] is None
+    assert entry["binScoreFile"] is None
+    assert len(entry["gateEnrichments"]) > 0
+
+
+
+def test_gate_ranking_emits_a_bin_score_at_protein_grain(tmp_path):
+    """The protein level had `Mean bin` but no `Mean bin vs parent`, so an NT gate-ranking run
+    showed the score on the nucleotide table and not the protein one.
+
+    The parent's own protein must score exactly zero. That holds whatever the reads are, so it
+    checks the referencing rather than the arithmetic around it.
+    """
+    rows = [("g1", "P", 50), ("g2", "P", 50), ("g1", "s1", 30), ("g2", "s1", 70),
+            ("g1", "m1", 0), ("g2", "m1", 100)]
+    variants = pl.DataFrame(
+        {
+            "variantKey": ["P", "s1", "m1"],
+            "proteinKey": ["pP", "pP", "pM"],
+            "mutationCount": [0, 1, 2],
+        },
+        schema_overrides={"mutationCount": pl.Int64},
+    )
+
+    code, out_dir, manifest = invoke(
+        tmp_path, reads_frame(rows), variants, gate_ranks={"g1": 1, "g2": 2}
+    )
+
+    assert code == 0
+    rolled = manifest["conditions"][0]["rolled"]
+    assert rolled["binScoreFile"] is not None
+    assert rolled["referenceMode"] == "referenced"
+
+    scores = read_scores(out_dir, rolled["binScoreFile"], "binScore")
+    # P and s1 pool into pP, which is the parent's protein, so it is its own reference.
+    assert scores["pP"] == pytest.approx(0.0, abs=1e-12)
+    assert "pM" in scores
+
+
+def test_the_protein_level_carries_no_baseline_band(tmp_path):
+    """The synonymous variants are pooled into the parent protein, so there is no set left to
+    measure noise from at this grain. The band stays on the nucleotide table."""
+    code, _, manifest = invoke(
+        tmp_path,
+        reads_frame(SYNONYMOUS_GATE_ROWS),
+        variants_frame(SYNONYMOUS_MUTATION_COUNTS, sequences=SYNONYMOUS_SEQUENCES),
+        gate_ranks=SYNONYMOUS_GATE_RANKS,
+        baseline=BASELINE_SYNONYMOUS,
+    )
+
+    assert code == 0
+    # The nucleotide level has the band...
+    assert manifest["conditions"][0]["binScoreBaselineFile"] is not None
+    # ...and there is no protein-grain band anywhere in the entry.
+    assert "binScoreBaselineFile" not in (manifest["conditions"][0]["rolled"] or {})

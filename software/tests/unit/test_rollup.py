@@ -63,7 +63,7 @@ def test_pooling_leaves_the_table_shape_unchanged():
     mapping = {variant: variant for _, variant, _ in BASE_ROWS}
     pooled = rollup.pool_reads_by_protein(reads_frame(BASE_ROWS), proteins_frame(mapping))
 
-    assert pooled.columns == ["sampleId", "variantKey", "reads", "condition", "gate"]
+    assert pooled.columns == ["sampleId", "variantKey", "reads", "condition", "gate", "parentId"]
 
 
 def test_a_variant_the_linker_does_not_place_is_dropped():

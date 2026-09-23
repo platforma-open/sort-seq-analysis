@@ -56,6 +56,19 @@ self.body(func(inputs) {
 	baselineFiles := inputs.baselineFiles
 	blockId := inputs.blockId
 
+	// Every baseline-derived column is held back for now. The computation still resolves the
+	// baseline and writes its files, and the manifest still reports it — only the columns are
+	// withheld. Flip this to true to emit them again.
+	EMIT_BASELINE_COLUMNS := false
+
+	// Appended to every description whose units are gate ranks, so a mean bin of 2.6 can be
+	// read without opening the settings. The computation renders the list; a rank is a JSON
+	// number here and Tengo's string form for one is not worth relying on.
+	ladderNote := ""
+	if !is_undefined(manifest.gateLadder) && manifest.gateLadder != "" {
+		ladderNote = " Gates: " + manifest.gateLadder + "."
+	}
+
 	// Carries no rank: the ordering is the declared gate order, applied when the view draws.
 	gateAxisSpec := {
 		name: "pl7.app/facsBin/gate",
@@ -124,6 +137,8 @@ self.body(func(inputs) {
 		//
 		// The axis is propagated verbatim from the abundance column, never constructed: a
 		// hand-built one resolves against the wrong variant axis on some projects.
+		// Absent where the gates carry no order: a rank mean would claim one.
+		if !is_undefined(entry.gateRankMeanFile) {
 		collect(scoreEntries, importOne(
 			scoreFiles[entry.gateRankMeanFile],
 			"gateRankMean",
@@ -138,12 +153,13 @@ self.body(func(inputs) {
 				},
 				annotations: {
 					"pl7.app/label": "Mean bin (" + condition + ")",
+					"pl7.app/format": ".2f",
 					"pl7.app/isScore": "true",
 					// "decreasing" means higher-is-favourable in the ranking path. It reads like
 					// the opposite; the UI names the option "Highest".
 					"pl7.app/score/rankingOrder": "decreasing",
 					// Header tooltip in the results table. Kept to one plain sentence.
-					"pl7.app/description": "The average gate this variant's reads landed in, weighted by reads. Higher means stronger binding, on an uncalibrated scale.",
+					"pl7.app/description": "The average gate this variant's reads landed in, weighted by reads. Higher means stronger binding, on an uncalibrated scale." + ladderNote,
 					"pl7.app/facsBin/sortYieldCorrected": sortYieldCorrected,
 					"pl7.app/table/visibility": "default",
 					"pl7.app/table/orderPriority": "70100"
@@ -151,6 +167,7 @@ self.body(func(inputs) {
 			},
 			variantAxes
 		))
+		}
 
 		// Not built at all rather than built empty: an empty column would claim every variant
 		// was unscorable here.
@@ -172,9 +189,10 @@ self.body(func(inputs) {
 					},
 					annotations: {
 						"pl7.app/label": "Mean bin vs parent (" + condition + ")",
+						"pl7.app/format": "+.2f",
 						"pl7.app/isScore": "true",
 						"pl7.app/score/rankingOrder": "decreasing",
-						"pl7.app/description": "This variant's mean bin minus the parent's, in gate steps. Zero means it behaves like the parent.",
+						"pl7.app/description": "This variant's mean bin minus the parent's, in gate steps. Zero means it behaves like the parent." + ladderNote,
 						"pl7.app/facsBin/sortYieldCorrected": sortYieldCorrected,
 						"pl7.app/table/visibility": "default",
 						"pl7.app/table/orderPriority": "70200"
@@ -182,6 +200,43 @@ self.body(func(inputs) {
 				},
 				variantAxes
 			))
+		}
+
+		// The noise band on `binScore`, one row per parent. Gate-ranking mode only: the score is
+		// per condition there, not per gate, so its baseline is one number rather than four.
+		//
+		// The level is not a zero point — `binScore` already subtracts the parent. It should
+		// read near zero, and a level far from it says the parent sequence is not typical of
+		// its own synonymous family.
+		if EMIT_BASELINE_COLUMNS && !is_undefined(parentIdAxisSpec) && !is_undefined(entry.binScoreBaselineFile) {
+			for quantity in [
+				{ column: "baselineLevel", id: "binScoreBaselineLevel_", name: "pl7.app/facsBin/binScoreBaselineLevel", type: "Double", fmt: "+.2f", label: "Bin score baseline (", desc: "The middle vs-parent value of this parent's synonymous variants. Should read near zero.", show: "default", order: "70210" },
+				{ column: "baselineP5", id: "binScoreBaselineP5_", name: "pl7.app/facsBin/binScoreBaselineP5", type: "Double", fmt: "+.2f", label: "Bin score baseline p5 (", desc: "The lower edge of the noise band, in gate steps." + ladderNote, show: "optional", order: "70211" },
+				{ column: "baselineP95", id: "binScoreBaselineP95_", name: "pl7.app/facsBin/binScoreBaselineP95", type: "Double", fmt: "+.2f", label: "Bin score baseline p95 (", desc: "The upper edge of the noise band, in gate steps. A variant above it is outside the noise." + ladderNote, show: "optional", order: "70212" },
+				{ column: "baselineVariants", id: "binScoreBaselineVariants_", name: "pl7.app/facsBin/binScoreBaselineVariants", type: "Int", fmt: ",d", label: "Bin score baseline variants (", desc: "How many synonymous variants backed the numbers beside it.", show: "optional", order: "70213" }
+			] {
+				collect(scoreEntries, importOne(
+					baselineFiles[entry.binScoreBaselineFile],
+					quantity.column,
+					quantity.id + suffix,
+					{
+						name: quantity.name,
+						valueType: quantity.type,
+						domain: {
+							"pl7.app/block": blockId,
+							"pl7.app/facsBin/condition": condition
+						},
+						annotations: {
+							"pl7.app/label": quantity.label + condition + ")",
+							"pl7.app/format": quantity.fmt,
+							"pl7.app/description": quantity.desc,
+							"pl7.app/table/visibility": quantity.show,
+							"pl7.app/table/orderPriority": quantity.order
+						}
+					},
+					[{ column: "parentId", spec: parentIdAxisSpec }]
+				))
+			}
 		}
 
 		// One column per (condition, gate), keyed on the variant axis ALONE with the gate in the
@@ -198,6 +253,7 @@ self.body(func(inputs) {
 			// that is encoded again come out base64'd with no error anywhere.
 			gateAnnotations := {
 				"pl7.app/label": "Enrichment " + gate.gate + " (" + condition + ")",
+				"pl7.app/format": ".3~g",
 				"pl7.app/isScore": "true",
 				"pl7.app/score/rankingOrder": "decreasing",
 				"pl7.app/description": "How much this variant is enriched in this gate relative to the unsorted input — 1 means no change, above 1 means enriched.",
@@ -209,6 +265,8 @@ self.body(func(inputs) {
 			// Annotations rather than a new output, so centring a colour scale needs no second
 			// query. Absent rather than zero: a zero level is a baseline measured at complete
 			// depletion.
+			// Present only where the run has one parent — the computation leaves `baseline`
+			// unset on a multi-parent run, where the column above carries every parent's.
 			if !is_undefined(gate.baseline) {
 				gateAnnotations["pl7.app/facsBin/baselineLevel"] = string(json.encode(gate.baseline.level))
 				// Percentiles, never a standard error. The whole object travels so a consumer
@@ -240,12 +298,87 @@ self.body(func(inputs) {
 				variantAxes
 			))
 
+			// The enrichment measured against its own parent's baseline: 1.0 is a variant of no
+			// effect, on every gate, condition and parent. Divided, not subtracted — an
+			// enrichment is a ratio, and a difference would leave the gates incomparable.
+			if EMIT_BASELINE_COLUMNS && gate.hasVsBaseline {
+				collect(scoreEntries, importOne(
+					scoreFiles[gate.file],
+					"gateEnrichmentVsBaseline",
+					"gateEnrichmentVsBaseline_" + suffix + "_" + strings.substituteSpecialCharacters(gate.gate),
+					{
+						name: "pl7.app/facsBin/gateEnrichmentVsBaseline",
+						valueType: "Double",
+						domain: {
+							"pl7.app/block": blockId,
+							"pl7.app/facsBin/condition": condition,
+							"pl7.app/alphabet": measuredAlphabet,
+							"pl7.app/facsBin/gate": gate.gate,
+							"pl7.app/facsBin/referenceMode": enrichmentReference
+						},
+						annotations: {
+							"pl7.app/label": "Enrichment vs baseline " + gate.gate + " (" + condition + ")",
+							"pl7.app/format": ".3~g",
+							"pl7.app/isScore": "true",
+							"pl7.app/score/rankingOrder": "decreasing",
+							"pl7.app/min": "0",
+							"pl7.app/description": "The enrichment divided by this parent's baseline for this gate. 1.0 is a variant behaving like one of no effect.",
+							"pl7.app/facsBin/sortYieldCorrected": sortYieldCorrected,
+							"pl7.app/table/visibility": "default",
+							"pl7.app/table/orderPriority": "70310"
+						}
+					},
+					variantAxes
+				))
+			}
+
+			// The per-gate baseline, one row per parent, on [parentId] alone.
+			//
+			// Emitted on every run rather than only a multi-parent one, so consumers read one
+			// shape. The annotations above carry the same numbers where the run has a single
+			// parent and are omitted where it has several — one annotation cannot describe
+			// several baselines, and this column can.
+			if EMIT_BASELINE_COLUMNS && !is_undefined(parentIdAxisSpec) && !is_undefined(gate.baselineGateFile) {
+				// The level is the number; the bounds and the count say how much to trust it,
+				// so they travel beside it rather than only in the manifest.
+				for quantity in [
+					{ column: "baselineLevel", id: "gateBaselineLevel_", name: "pl7.app/facsBin/gateBaselineLevel", type: "Double", fmt: ".3~g", label: "Baseline ", desc: "Where a variant of no effect sits in this gate, measured on this parent's own baseline set. The median, because an enrichment has a long tail.", show: "default", order: "70350" },
+					{ column: "baselineP5", id: "gateBaselineP5_", name: "pl7.app/facsBin/gateBaselineP5", type: "Double", fmt: ".3~g", label: "Baseline p5 ", desc: "The 5th percentile of this parent's baseline set. A threshold rests on this, not on a standard error.", show: "optional", order: "70351" },
+					{ column: "baselineP95", id: "gateBaselineP95_", name: "pl7.app/facsBin/gateBaselineP95", type: "Double", fmt: ".3~g", label: "Baseline p95 ", desc: "The 95th percentile of this parent's baseline set.", show: "optional", order: "70352" },
+					{ column: "baselineVariants", id: "gateBaselineVariants_", name: "pl7.app/facsBin/gateBaselineVariants", type: "Int", fmt: ",d", label: "Baseline variants ", desc: "How many of this parent's baseline variants survived the read floor here and backed the numbers beside it.", show: "optional", order: "70353" }
+				] {
+					collect(scoreEntries, importOne(
+						baselineFiles[gate.baselineGateFile],
+						quantity.column,
+						quantity.id + suffix + "_" + strings.substituteSpecialCharacters(gate.gate),
+						{
+							name: quantity.name,
+							valueType: quantity.type,
+							domain: {
+								"pl7.app/block": blockId,
+								"pl7.app/facsBin/condition": condition,
+								"pl7.app/facsBin/gate": gate.gate,
+								"pl7.app/facsBin/referenceMode": enrichmentReference
+							},
+							annotations: {
+								"pl7.app/label": quantity.label + gate.gate + " (" + condition + ")",
+								"pl7.app/format": quantity.fmt,
+								"pl7.app/description": quantity.desc,
+								"pl7.app/table/visibility": quantity.show,
+								"pl7.app/table/orderPriority": quantity.order
+							}
+						},
+						[{ column: "parentId", spec: parentIdAxisSpec }]
+					))
+				}
+			}
+
 			// On [parentId, position] — the shape the heat map already resolves.
 			//
 			// Axes propagated verbatim from the profiler's parent-residue column: a hand-built
 			// position axis carries this block's numbering and joins to nothing. A file only
 			// reaches here once the computation verified its offsets against those labels.
-			if !is_undefined(parentIdAxisSpec) && !is_undefined(gate.baselinePositionFile) {
+			if EMIT_BASELINE_COLUMNS && !is_undefined(parentIdAxisSpec) && !is_undefined(gate.baselinePositionFile) {
 				baselineAxes := [
 					{ column: "parentId", spec: parentIdAxisSpec },
 					{ column: "position", spec: positionAxisSpec }
@@ -265,6 +398,7 @@ self.body(func(inputs) {
 						},
 						annotations: {
 							"pl7.app/label": "Baseline " + gate.gate + " (" + condition + ")",
+							"pl7.app/format": ".3~g",
 							"pl7.app/description": "The enrichment of the parent's synonymous variants at this position — where a variant of no effect sits.",
 							"pl7.app/table/visibility": "optional",
 							"pl7.app/table/orderPriority": "70400"
@@ -282,6 +416,7 @@ self.body(func(inputs) {
 		if !is_undefined(entry.rolled) && !is_undefined(proteinAxisSpec) {
 			proteinAxes := [{ column: "variantKey", spec: proteinAxisSpec }]
 
+			if !is_undefined(entry.rolled.gateRankMeanFile) {
 			collect(scoreEntries, importOne(
 				scoreFiles[entry.rolled.gateRankMeanFile],
 				"gateRankMean",
@@ -296,9 +431,10 @@ self.body(func(inputs) {
 					},
 					annotations: {
 						"pl7.app/label": "Mean bin (" + condition + ")",
+						"pl7.app/format": ".2f",
 						"pl7.app/isScore": "true",
 						"pl7.app/score/rankingOrder": "decreasing",
-						"pl7.app/description": "The average gate this protein sorted into, pooled over its synonymous nucleotide variants.",
+						"pl7.app/description": "The average gate this protein sorted into, pooled over its synonymous nucleotide variants." + ladderNote,
 						"pl7.app/facsBin/sortYieldCorrected": sortYieldCorrected,
 						"pl7.app/table/visibility": "default",
 						"pl7.app/table/orderPriority": "70100"
@@ -306,10 +442,45 @@ self.body(func(inputs) {
 				},
 				proteinAxes
 			))
+			}
 
+			// The same reference at protein grain: each protein against its own parent's protein.
+			// It carries no baseline band — the synonymous variants were pooled into the parent
+			// protein, so there is no set left to measure noise from here. The band stays on the
+			// nucleotide table, where it was measured.
+			if !is_undefined(entry.rolled.binScoreFile) {
+				collect(scoreEntries, importOne(
+					scoreFiles[entry.rolled.binScoreFile],
+					"binScore",
+					"binScoreAa_" + suffix,
+					{
+						name: "pl7.app/facsBin/binScore",
+						valueType: "Double",
+						domain: {
+							"pl7.app/block": blockId,
+							"pl7.app/facsBin/condition": condition,
+							"pl7.app/alphabet": "aminoacid",
+							"pl7.app/facsBin/referenceMode": entry.rolled.referenceMode
+						},
+						annotations: {
+							"pl7.app/label": "Mean bin vs parent (" + condition + ")",
+							"pl7.app/format": "+.2f",
+							"pl7.app/isScore": "true",
+							"pl7.app/score/rankingOrder": "decreasing",
+							"pl7.app/description": "This protein's mean bin minus the parent protein's, in gate steps. Zero means it behaves like the parent." + ladderNote,
+							"pl7.app/facsBin/sortYieldCorrected": sortYieldCorrected,
+							"pl7.app/table/visibility": "default",
+							"pl7.app/table/orderPriority": "70200"
+						}
+					},
+					proteinAxes
+				))
+			}
+
+			if !is_undefined(entry.rolled.gateRankMeanFile) {
 			for quantity in [
-				{ column: "uncertainty", id: "gateRankMeanUncertaintyAa_", name: "pl7.app/facsBin/gateRankMeanUncertainty", type: "Double", label: "Mean bin error (", desc: "The larger of the counting error and the disagreement between this protein's nucleotide variants.", order: "70150" },
-				{ column: "ntVariants", id: "gateRankMeanNtVariantsAa_", name: "pl7.app/facsBin/ntVariants", type: "Int", label: "NT variants (", desc: "How many synonymous nucleotide variants of this protein the score was pooled from.", order: "70160" }
+				{ column: "uncertainty", id: "gateRankMeanUncertaintyAa_", name: "pl7.app/facsBin/gateRankMeanUncertainty", type: "Double", fmt: ".3f", label: "Mean bin error (", desc: "The larger of the counting error and the disagreement between this protein's nucleotide variants.", order: "70150" },
+				{ column: "ntVariants", id: "gateRankMeanNtVariantsAa_", name: "pl7.app/facsBin/ntVariants", type: "Int", fmt: ",d", label: "NT variants (", desc: "How many synonymous nucleotide variants of this protein the score was pooled from.", order: "70160" }
 			] {
 				collect(scoreEntries, importOne(
 					scoreFiles[entry.rolled.gateRankMeanFile],
@@ -325,6 +496,7 @@ self.body(func(inputs) {
 						},
 						annotations: {
 							"pl7.app/label": quantity.label + condition + ")",
+							"pl7.app/format": quantity.fmt,
 							"pl7.app/min": "0",
 							"pl7.app/description": quantity.desc,
 							"pl7.app/table/visibility": "optional",
@@ -334,10 +506,12 @@ self.body(func(inputs) {
 					proteinAxes
 				))
 			}
+			}
 
 			for gate in entry.rolled.gateEnrichments {
 				gateAnno := {
 					"pl7.app/label": "Enrichment " + gate.gate + " (" + condition + ")",
+					"pl7.app/format": ".3~g",
 					"pl7.app/isScore": "true",
 					"pl7.app/score/rankingOrder": "decreasing",
 					"pl7.app/description": "How much this protein is enriched in this gate relative to the unsorted input, averaged over its nucleotide variants in log space.",
@@ -372,8 +546,8 @@ self.body(func(inputs) {
 				// Both ride in the same file as the enrichment, and exist only at this level:
 				// a per-variant enrichment has no nucleotide variants to disagree.
 				for quantity in [
-					{ column: "uncertainty", id: "gateEnrichmentUncertaintyAa_", name: "pl7.app/facsBin/gateEnrichmentUncertainty", type: "Double", label: "Enrichment error ", desc: "The larger of the counting error and the disagreement between this protein's nucleotide variants.", order: "70310" },
-					{ column: "ntVariants", id: "gateEnrichmentNtVariantsAa_", name: "pl7.app/facsBin/gateEnrichmentNtVariants", type: "Int", label: "Enrichment NT variants ", desc: "How many of this protein's nucleotide variants entered the average. One depleted to zero has no finite variance, so it cannot enter a log average and is not counted here.", order: "70320" }
+					{ column: "uncertainty", id: "gateEnrichmentUncertaintyAa_", name: "pl7.app/facsBin/gateEnrichmentUncertainty", type: "Double", fmt: ".3f", label: "Enrichment error ", desc: "The larger of the counting error and the disagreement between this protein's nucleotide variants.", order: "70310" },
+					{ column: "ntVariants", id: "gateEnrichmentNtVariantsAa_", name: "pl7.app/facsBin/gateEnrichmentNtVariants", type: "Int", fmt: ",d", label: "Enrichment NT variants ", desc: "How many of this protein's nucleotide variants entered the average. One depleted to zero has no finite variance, so it cannot enter a log average and is not counted here.", order: "70320" }
 				] {
 					collect(scoreEntries, importOne(
 						scoreFiles[gate.file],
@@ -391,6 +565,7 @@ self.body(func(inputs) {
 							},
 							annotations: {
 								"pl7.app/label": quantity.label + gate.gate + " (" + condition + ")",
+								"pl7.app/format": quantity.fmt,
 								"pl7.app/min": "0",
 								"pl7.app/description": quantity.desc,
 								"pl7.app/table/visibility": "optional",
@@ -424,6 +599,7 @@ self.body(func(inputs) {
 				},
 				annotations: {
 					"pl7.app/label": "Gate read frequency (" + condition + ")",
+					"pl7.app/format": ".3~g",
 					"pl7.app/table/visibility": "optional"
 				}
 			},
@@ -444,11 +620,41 @@ self.body(func(inputs) {
 				},
 				annotations: {
 					"pl7.app/label": "Gate reads (" + condition + ")",
+					"pl7.app/format": ",d",
 					"pl7.app/table/visibility": "optional"
 				}
 			},
 			distributionAxes
 		))
+	}
+
+	// One row per parent, for the run rather than per condition: which parent holds how much of
+	// the dataset. Emitted in every mode, so the parents are visible on a run that produces no
+	// baseline — a gate-ranking run has none at all.
+	if !is_undefined(parentIdAxisSpec) && !is_undefined(manifest.parentSummaryFile) {
+		for quantity in [
+			{ column: "parentVariants", id: "parentVariants", name: "pl7.app/facsBin/parentVariants", fmt: ",d", label: "Variants", desc: "How many variants this run scored under this parent.", order: "70010" },
+			{ column: "parentReads", id: "parentReads", name: "pl7.app/facsBin/parentReads", fmt: ",d", label: "Reads", desc: "How many reads this parent's variants carry across every gate the run covers.", order: "70020" }
+		] {
+			collect(scoreEntries, importOne(
+				scoreFiles[manifest.parentSummaryFile],
+				quantity.column,
+				quantity.id,
+				{
+					name: quantity.name,
+					valueType: "Int",
+					domain: { "pl7.app/block": blockId },
+					annotations: {
+						"pl7.app/label": quantity.label,
+						"pl7.app/format": quantity.fmt,
+						"pl7.app/description": quantity.desc,
+						"pl7.app/table/visibility": "default",
+						"pl7.app/table/orderPriority": quantity.order
+					}
+				},
+				[{ column: "parentId", spec: parentIdAxisSpec }]
+			))
+		}
 	}
 
 	buildFrame := func(entries) {

@@ -18,11 +18,19 @@ GATE_RANKS = {"g1": 1, "g2": 2, "g3": 3}
 PARENT = "P"
 
 
-def reads_frame(rows: list[tuple[str, str, int]], condition: str = "pH7", fractions: dict[str, float] | None = None):
+def reads_frame(
+    rows: list[tuple[str, str, int]],
+    condition: str = "pH7",
+    fractions: dict[str, float] | None = None,
+    parents: dict[str, str] | None = None,
+):
     """Build a reads table from (gate, variantKey, reads) triples.
 
     One sample per (condition, gate), with the id derived from the pair so two cannot
     collide. Use `replicate_frame` for a second sample of a gate.
+
+    Every row carries a `parentId`, because every depth is taken within one parent. Without
+    `parents` they all share one, which is the single-parent run.
     """
     frame = pl.DataFrame(
         {
@@ -31,6 +39,9 @@ def reads_frame(rows: list[tuple[str, str, int]], condition: str = "pH7", fracti
             "reads": [reads for _, _, reads in rows],
             "condition": [condition] * len(rows),
             "gate": [gate for gate, _, _ in rows],
+            "parentId": [
+                "" if parents is None else parents.get(variant, "") for _, variant, _ in rows
+            ],
         },
         schema_overrides={"reads": pl.Int64},
     )
@@ -265,7 +276,7 @@ def write_params(
     excluded: list[str] | None = None,
     read_floor: int | None = None,
     sort_fraction_column: str | None = None,
-    mode: str | None = None,
+    gates_ordered: bool | None = None,
     input_gate: str | None = None,
     baseline: str | None = None,
     baseline_sequence: str | None = None,
@@ -279,7 +290,7 @@ def write_params(
         "excludedConditions": excluded if excluded is not None else [],
         "readFloor": read_floor,
         "sortFractionColumn": sort_fraction_column,
-        "mode": mode,
+        "gatesOrdered": gates_ordered,
         "inputGate": input_gate,
         "baseline": baseline,
         "baselineSequence": baseline_sequence,

@@ -32,7 +32,7 @@ def test_defaults_are_answers_not_gaps(tmp_path):
     assert params.sort_yield_corrected is False
     # No mode: the gate-ranking run, which is also every document written before
     # enrichment existed.
-    assert params.mode == RUN_MODE_GATE_RANKING
+    assert params.scores_enrichment is False
     assert params.scores_enrichment is False
     assert params.input_gate is None
     assert params.baseline is None
@@ -52,7 +52,7 @@ def test_absent_optional_keys_mean_the_same_as_explicit_nulls(tmp_path):
     assert params.read_floor is None
     assert params.sort_fraction_column is None
     assert params.sort_yield_corrected is False
-    assert params.mode == RUN_MODE_GATE_RANKING
+    assert params.scores_enrichment is False
     assert params.input_gate is None
     assert params.baseline is None
 
@@ -62,27 +62,28 @@ def test_absent_optional_keys_mean_the_same_as_explicit_nulls(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_enrichment_mode_reads_its_input_and_baseline(tmp_path):
+def test_an_input_and_a_baseline_are_read_together(tmp_path):
     params = load_params(
         write_params(
             tmp_path / "params.json",
-            mode=RUN_MODE_ENRICHMENT,
             input_gate=INPUT_GATE,
             baseline=BASELINE_SYNONYMOUS,
         )
     )
 
-    assert params.mode == RUN_MODE_ENRICHMENT
+    assert params.scores_enrichment is True
     assert params.scores_enrichment is True
     assert params.input_gate == INPUT_GATE
     assert params.baseline == BASELINE_SYNONYMOUS
 
 
-def test_enrichment_mode_requires_an_input_gate(tmp_path):
-    """Enrichment with nothing to enrich against is a caller bug: the block model refuses
-    it before the run, so reaching here means the two sides disagree."""
-    with pytest.raises(ValueError, match="requires inputGate"):
-        load_params(write_params(tmp_path / "params.json", mode=RUN_MODE_ENRICHMENT))
+def test_naming_an_input_is_what_turns_enrichment_on(tmp_path):
+    """The run is read off the data, not off a setting. An enrichment needs a reference, so
+    naming one is the whole of what asks for it — `mode` is carried for reporting only."""
+    params = load_params(write_params(tmp_path / "params.json", input_gate=INPUT_GATE))
+
+    assert params.scores_enrichment is True
+    assert params.scores_gate_rank is True
 
 
 def test_the_input_gate_cannot_also_be_a_rung(tmp_path):
@@ -90,20 +91,36 @@ def test_the_input_gate_cannot_also_be_a_rung(tmp_path):
     exactly 1 — output of ordinary shape carrying no measurement at all."""
     with pytest.raises(ValueError, match="cannot be a rung"):
         load_params(
-            write_params(tmp_path / "params.json", mode=RUN_MODE_ENRICHMENT, input_gate="g2")
+            write_params(tmp_path / "params.json", input_gate="g2")
         )
 
 
-def test_an_input_gate_outside_enrichment_mode_is_refused_not_ignored(tmp_path):
-    """Naming an input in a gate-ranking run means the caller believes one is in use.
-    Dropping it silently would score against nothing while the settings said otherwise."""
-    with pytest.raises(ValueError, match="meaningful only in"):
-        load_params(write_params(tmp_path / "params.json", input_gate=INPUT_GATE))
+def test_no_input_means_no_enrichment(tmp_path):
+    params = load_params(write_params(tmp_path / "params.json"))
+
+    assert params.scores_enrichment is False
+    assert params.scores_gate_rank is True
 
 
-def test_unknown_mode_is_refused(tmp_path):
-    with pytest.raises(ValueError, match="mode must be one of"):
-        load_params(write_params(tmp_path / "params.json", mode="enrichment-v2"))
+def test_gates_ordered_is_absent_on_every_document_written_before_it(tmp_path):
+    """Absent means ordered, which is what every run has been until now."""
+    assert load_params(write_params(tmp_path / "params.json")).gates_ordered is True
+
+
+def test_unordered_gates_skip_the_rank_metrics(tmp_path):
+    """Ranks only mean something along a binding axis."""
+    params = load_params(
+        write_params(tmp_path / "params.json", input_gate=INPUT_GATE, gates_ordered=False)
+    )
+
+    assert params.scores_gate_rank is False
+    assert params.scores_enrichment is True
+
+
+def test_unordered_gates_with_no_input_leave_nothing_to_compute(tmp_path):
+    """No order to rank along and no reference to enrich against. Refused before the run."""
+    with pytest.raises(ValueError, match="nothing to compute"):
+        load_params(write_params(tmp_path / "params.json", gates_ordered=False))
 
 
 def test_unknown_baseline_is_refused(tmp_path):

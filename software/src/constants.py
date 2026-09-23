@@ -20,9 +20,15 @@ COL_SEQUENCE = "sequence"
 COL_PROTEIN = "proteinKey"
 
 # The profiler's per-position parent residues, used to label this block's codon offsets.
+# `parentId` is also the key of the optional variant -> parent table: a dataset may carry any
+# number of parents, and every depth is taken within one.
 COL_PARENT_ID = "parentId"
 COL_POSITION_LABEL = "position"
 COL_RESIDUE = "residue"
+
+# Stands in for the parent on a run that resolved no parent link, so the per-parent group-by is
+# degenerate rather than branched on.
+PARENT_UNKNOWN = ""
 
 # --- Output headers ---------------------------------------------------------
 
@@ -32,6 +38,9 @@ OUT_GATE_FREQUENCY = "gateFrequency"
 OUT_GATE_READS = "gateReads"
 OUT_GATE_ENRICHMENT = "gateEnrichment"
 OUT_INPUT_READS = "inputReads"
+# The enrichment divided by its own parent's baseline level for that gate. 1.0 is a variant
+# behaving like one of no effect — the same zero point on every gate, condition and parent.
+OUT_ENRICHMENT_VS_BASELINE = "gateEnrichmentVsBaseline"
 
 # `position` is this block's own codon offset, zero-based — NOT the profiler's position
 # label. Aligning the two is `pipeline._align_positions`; being one out is undetectable
@@ -52,6 +61,9 @@ OUT_NT_VARIANTS = "ntVariants"
 SCORE_FILE_PATTERN = "score_{quantity}_c{index}.tsv"
 DISTRIBUTION_FILE_PATTERN = "dist_c{index}.tsv"
 MANIFEST_FILE = "manifest.json"
+# One row per parent for the whole run, keyed [parentId]. In the score set so it needs no
+# second file set; the manifest names it.
+PARENT_SUMMARY_FILE = "score_parentSummary.tsv"
 
 # `rank` is the gate's declared rank, not its position among the gates this condition
 # collected — otherwise one name would mean different gates in different conditions.
@@ -63,6 +75,12 @@ ROLLED_GATE_SCORE_FILE_PATTERN = "score_{quantity}_aa_c{index}_g{rank}.tsv"
 
 # Keyed on codon offset, not on a variant, so it gets its own file set.
 BASELINE_FILE_PATTERN = "baseline_c{index}_g{rank}.tsv"
+# The same baseline per gate, one row per parent. Keyed on [parentId] alone, so a dataset
+# carrying several parents reports each — an annotation on the enrichment column can hold one.
+BASELINE_GATE_FILE_PATTERN = "baseline_gate_c{index}_g{rank}.tsv"
+# The baseline of `binScore` itself, one row per parent. Gate-ranking mode only, where the
+# score is per condition rather than per gate.
+BASELINE_BIN_SCORE_FILE_PATTERN = "baseline_binScore_c{index}.tsv"
 BASELINE_FILE_SET_REGEX = r"^baseline_.*\.tsv$"
 
 SCORE_FILE_SET_REGEX = r"^score_.*\.tsv$"

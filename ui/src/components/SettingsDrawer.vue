@@ -12,8 +12,8 @@ import {
   PlAccordion,
   PlAccordionSection,
   PlAlert,
-  PlBtnGroup,
   PlDropdown,
+  PlCheckbox,
   PlElementList,
   PlDropdownMulti,
   PlDropdownRef,
@@ -29,6 +29,8 @@ import { useApp } from "../app";
 const app = useApp();
 
 const gateOrderOpen = ref(true);
+const enrichmentOpen = ref(true);
+const armsOpen = ref(true);
 
 // Open state belongs to the parent, which mounts this beside the button that opens it.
 const isOpen = defineModel<boolean>({ required: true });
@@ -68,22 +70,17 @@ const conditionValueOptions = computed(() =>
 
 const gateValues = computed(() => app.model.data.gateValues);
 
-const isEnrichment = computed(() => app.model.data.mode === "enrichment");
-
-const modeOptions = [
-  { label: "Gate ranking", value: "gate-ranking" as const },
-  { label: "Per-gate enrichment", value: "enrichment" as const },
-];
-
 /**
- * `data.mode` is optional, so an older block holds `undefined` and the button group would open
- * with neither option lit. The getter supplies the default for display; the setter runs only
- * on a click.
+ * The run is read off two facts, not chosen. An enrichment needs a reference, so naming one
+ * turns it on; ranks need an order, so the toggle below turns those on.
  */
-const mode = computed({
-  get: () => app.model.data.mode ?? "gate-ranking",
+const isEnrichment = computed(() => app.model.data.inputGate !== undefined);
+
+/** `undefined` means ordered, which is the ordinary case and every block made before this. */
+const gatesOrdered = computed({
+  get: () => app.model.data.gatesOrdered !== false,
   set: (value) => {
-    app.model.data.mode = value;
+    app.model.data.gatesOrdered = value ? undefined : false;
   },
 });
 
@@ -127,6 +124,14 @@ const baselineOptions = computed(() => {
   ];
   if (isNucleotide.value === false && app.model.data.baseline !== "synonymous") {
     return options.filter((option) => option.value !== "synonymous");
+  }
+  // Gate ranking takes only the synonymous option. The other two name a single variant, which
+  // repeats the reference "Mean bin vs parent" already subtracts and adds no spread. The
+  // current pick stays listed either way, or the dropdown renders empty and looks broken.
+  if (!isEnrichment.value) {
+    return options.filter(
+      (option) => option.value === "synonymous" || option.value === app.model.data.baseline,
+    );
   }
   return options;
 });
@@ -214,15 +219,25 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
          ranks close up behind it. -->
 
     <PlAccordion v-if="app.model.data.gateOrder.length > 0" multiple>
-      <PlAccordionSection v-model="gateOrderOpen" label="Gate Order">
+      <PlAccordionSection v-model="gateOrderOpen" label="Gates">
+        <!-- The first of the two facts. Off, the list below is a selection and nothing that
+             claims an order is emitted. -->
+        <PlCheckbox v-model="gatesOrdered">
+          Gates are ordered
+          <PlTooltip class="info" position="top">
+            <template #tooltip> Gates are sorted low to high signal </template>
+          </PlTooltip>
+        </PlCheckbox>
+
         <div style="display: flex; margin-bottom: -15px">
-          Define gate order
+          {{ gatesOrdered ? "Define gate order" : "Gates to include" }}
           <PlTooltip class="info">
-            <template #label>Define gate order</template>
+            <template #label>{{
+              gatesOrdered ? "Define gate order" : "Gates to include"
+            }}</template>
             <template #tooltip>
-              Weakest binder first — reversing this order inverts every score. Remove any value that
-              is not a sort gate — an unsorted input, a specificity or stability arm — and its
-              samples take no part in the run.
+              Remove any value that is not a sort gate — an unsorted input, a specificity or
+              stability arm — and its samples take no part in the run.
             </template>
           </PlTooltip>
         </div>
@@ -232,108 +247,113 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
       </PlAccordionSection>
     </PlAccordion>
 
-    <!-- After the gate order because both modes read it. -->
-    <PlBtnGroup v-model="mode" :options="modeOptions" label="What to measure">
-      <template #tooltip>
-        <b>Gate ranking</b> needs your gates ordered weakest to strongest, and scores where along
-        that ladder each variant sorted. <b>Per-gate enrichment</b> needs an unsorted input sample,
-        and scores how much each variant gained or lost in every gate against it.
-      </template>
-    </PlBtnGroup>
-
-    <!-- Enrichment only: outside it the run does not use this. -->
-    <PlDropdown
-      v-if="isEnrichment"
-      v-model="app.model.data.inputGate"
-      :options="inputGateOptions"
-      label="Input sample"
-      clearable
-      helper="The unsorted reference every gate is compared against."
-    >
-      <template #tooltip>
-        Pick the gate value holding your unsorted library. It must not be one of the ranked gates —
-        remove it from the gate order above and it will appear here. Each factor level uses its own
-        samples carrying this value, so one choice covers every arm.
-      </template>
-    </PlDropdown>
-
-    <PlDropdown
-      v-if="isEnrichment"
-      v-model="app.model.data.baseline"
-      :options="baselineOptions"
-      label="Baseline"
-      clearable
-      helper="The level enrichment is read against. Leave empty to report the ratios alone."
-    >
-      <template #tooltip>
-        Sets where "no change" sits on every map. Synonymous variants give the only baseline with a
-        real spread, because it is measured over many variants rather than one.
-      </template>
-    </PlDropdown>
-
-    <PlTextField
-      v-if="isEnrichment && app.model.data.baseline === 'sequence'"
-      v-model="app.model.data.baselineSequence"
-      label="Baseline variant key"
-      clearable
-      helper="The variant key of the nucleotide sequence to use as the baseline."
-    />
-
-    <PlAlert v-if="synonymousUnavailable" type="warn" label="Synonymous baseline unavailable">
-      This dataset is protein-level, where synonymous variants have already been merged into the
-      wild type. The run will succeed and report no baseline. Pick a nucleotide-level dataset, or
-      choose another baseline.
+    <!-- What the two facts add up to. Replaces the mode control: it states the consequence
+         rather than asking the user to pick it. -->
+    <PlAlert v-if="app.model.outputs.runShape" type="info">
+      {{ app.model.outputs.runShape }}
     </PlAlert>
 
-    <!-- The condition column and its exclusions, likewise together. -->
-    <PlDropdown
-      :model-value="app.model.data.conditionColumnRef"
-      :options="app.model.outputs.conditionOptions ?? []"
-      label="Factor column"
-      clearable
-      @update:model-value="setConditionColumn"
-    >
-      <template #tooltip>
-        The variable separating your sorts into arms; each level is scored on its own.
-      </template>
-    </PlDropdown>
+    <PlAccordion multiple>
+      <PlAccordionSection v-model="enrichmentOpen" label="Per-Gate Enrichment">
+        <!-- Always offered: naming an input is what asks for the enrichment. -->
+        <PlDropdown
+          v-model="app.model.data.inputGate"
+          :options="inputGateOptions"
+          label="Input sample"
+          clearable
+        >
+          <template #tooltip>
+            The gate value holding your unsorted library. Optional — naming one adds the per-gate
+            enrichment against it. It cannot be one of the gates above.
+          </template>
+        </PlDropdown>
 
-    <PlDropdownMulti
-      v-model="app.model.data.excludedConditions"
-      :options="conditionValueOptions"
-      label="Exclude factors"
-    >
-      <template #tooltip>
-        Levels to leave out, such as a failed sort; excluded levels produce no results.
-      </template>
-    </PlDropdownMulti>
+        <!-- Offered whether or not there is an input: both runs benefit, for different reasons. -->
+        <PlDropdown
+          v-model="app.model.data.baseline"
+          :options="baselineOptions"
+          label="Baseline"
+          clearable
+        >
+          <template #tooltip>
+            A set of variants known to have no effect. With an input it sets where "no change" sits,
+            which is not 1.0. Without one it shows how wide the noise is. Only the synonymous option
+            has a spread, being measured over many variants rather than one.
+          </template>
+        </PlDropdown>
 
-    <!-- Absent means the score is computed uncorrected, declared on every value it emits. -->
-    <PlDropdown
-      v-model="app.model.data.sortFractionColumnRef"
-      :options="app.model.outputs.sortFractionOptions ?? []"
-      label="Sort-fraction column"
-      clearable
-      helper="Per-gate normalized cell yield. Absent, the score is computed uncorrected."
-    >
-      <template #tooltip>
-        Corrects for gates that collected unequal numbers of cells, which would otherwise look
-        enriched for every variant.
-      </template>
-    </PlDropdown>
+        <PlTextField
+          v-if="isEnrichment && app.model.data.baseline === 'sequence'"
+          v-model="app.model.data.baselineSequence"
+          label="Baseline variant key"
+          clearable
+        >
+          <template #tooltip> The key of the one nucleotide sequence to measure against. </template>
+        </PlTextField>
 
-    <!-- Clearable, and cleared is the answer — not a floor of zero. -->
-    <PlNumberField
-      v-model="app.model.data.readFloor"
-      label="Read-count floor"
-      :minimum="0"
-      :step="1"
-      clearable
-      helper="Leave empty to score every variant with reads in at least one collected gate."
-    >
-      <template #tooltip>
-        Drops variants with too few reads to give a meaningful gate profile.
-      </template>
-    </PlNumberField>
+        <PlAlert v-if="synonymousUnavailable" type="warn" label="Synonymous baseline unavailable">
+          This dataset is protein-level, where synonymous variants have already been merged into the
+          wild type. The run will succeed and report no baseline. Pick a nucleotide-level dataset,
+          or choose another baseline.
+        </PlAlert>
+      </PlAccordionSection>
+    </PlAccordion>
+
+    <PlAccordion multiple>
+      <PlAccordionSection v-model="armsOpen" label="Arms">
+        <!-- The factor column and its exclusions, together. -->
+        <PlDropdown
+          :model-value="app.model.data.conditionColumnRef"
+          :options="app.model.outputs.conditionOptions ?? []"
+          label="Factor column"
+          clearable
+          @update:model-value="setConditionColumn"
+        >
+          <template #tooltip>
+            The variable separating your sorts into arms; each level is scored on its own.
+          </template>
+        </PlDropdown>
+
+        <PlDropdownMulti
+          v-model="app.model.data.excludedConditions"
+          :options="conditionValueOptions"
+          label="Exclude factors"
+        >
+          <template #tooltip>
+            Levels to leave out, such as a failed sort; excluded levels produce no results.
+          </template>
+        </PlDropdownMulti>
+      </PlAccordionSection>
+    </PlAccordion>
+
+    <!-- Both default to absent, and absent is an answer rather than an unset field: no
+         correction, and no floor. Neither is needed for a first run. -->
+    <PlAccordionSection label="Advanced Settings">
+      <PlDropdown
+        v-model="app.model.data.sortFractionColumnRef"
+        :options="app.model.outputs.sortFractionOptions ?? []"
+        label="Sort-fraction column"
+        clearable
+      >
+        <template #tooltip>
+          Per-gate normalized cell yield. Corrects for gates that collected unequal numbers of
+          cells, which would otherwise look enriched for every variant. Leave empty and the score is
+          computed uncorrected.
+        </template>
+      </PlDropdown>
+
+      <PlNumberField
+        v-model="app.model.data.readFloor"
+        label="Read-count floor"
+        :minimum="0"
+        :step="1"
+        clearable
+      >
+        <template #tooltip>
+          Drops variants with too few reads to give a meaningful gate profile. Leave empty to score
+          every variant with reads in at least one gate.
+        </template>
+      </PlNumberField>
+    </PlAccordionSection>
   </PlSlideModal>
 </template>

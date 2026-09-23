@@ -28,6 +28,7 @@ from conftest import (
 import codons
 import scoring
 from constants import (
+    OUT_BIN_SCORE,
     BASELINE_ABSENT_NEEDS_NUCLEOTIDE,
     BASELINE_ABSENT_NO_MUTATION_COUNT,
     BASELINE_ABSENT_NO_SYNONYMOUS,
@@ -415,3 +416,59 @@ def test_the_split_carries_the_same_shape_as_the_per_gate_summary():
         "baselineP95",
         "baselineVariants",
     ]
+
+
+# ---------------------------------------------------------------------------
+# The baseline as a reference the consumer can read directly.
+# ---------------------------------------------------------------------------
+
+
+def test_enrichment_vs_baseline_divides_rather_than_subtracts():
+    """The synonymous set is W2..W6 with enrichments 0.5, 1.0, 1.5, 2.0, 2.5, so the level is
+    the median 1.5.
+
+    M1 enriches at 2.0. Against the baseline that is 2.0 / 1.5 = 4/3 — a third above no change.
+    Subtracting would give 0.5, which is not comparable to any other gate's 0.5.
+    """
+    level = 1.5
+    assert 2.0 / level == pytest.approx(4 / 3, rel=REL)
+    # W4 sits exactly on the level, so it reads as 1.0 — a variant of no effect.
+    assert 1.5 / level == pytest.approx(1.0, rel=REL)
+
+
+def test_the_bin_score_baseline_is_one_number_per_condition():
+    """`binScore` is per variant, not per gate, so its baseline is one level and one band for
+    the whole condition — unlike the enrichment baseline, which is one per gate."""
+    values = pl.DataFrame(
+        {COL_VARIANT: ["W2", "W3", "W4", "W5", "W6"], OUT_BIN_SCORE: [-0.2, -0.1, 0.0, 0.1, 0.3]}
+    )
+    baseline = scoring.Baseline(BASELINE_SYNONYMOUS, ("W2", "W3", "W4", "W5", "W6"), None)
+
+    summary = scoring.value_baseline(values, OUT_BIN_SCORE, baseline)
+
+    assert summary["variants"] == 5
+    assert summary["level"] == pytest.approx(0.0, abs=1e-12)
+    # Linear interpolation over five values: p5 sits at index 0.2, p95 at index 3.8.
+    assert summary["spread"]["p5"] == pytest.approx(-0.2 + 0.2 * 0.1, rel=REL)
+    assert summary["spread"]["p95"] == pytest.approx(0.1 + 0.8 * 0.2, rel=REL)
+
+
+def test_the_bin_score_baseline_level_flags_an_atypical_parent():
+    """The level should read near zero, because binScore already subtracts the parent. A level
+    far from zero says the parent sequence is not typical of its own synonymous family, and
+    every vs-parent value on the run is shifted by that much."""
+    shifted = pl.DataFrame(
+        {COL_VARIANT: ["W2", "W3", "W4"], OUT_BIN_SCORE: [0.38, 0.40, 0.44]}
+    )
+    baseline = scoring.Baseline(BASELINE_SYNONYMOUS, ("W2", "W3", "W4"), None)
+
+    summary = scoring.value_baseline(shifted, OUT_BIN_SCORE, baseline)
+
+    assert summary["level"] == pytest.approx(0.40, rel=REL)
+    assert abs(summary["level"]) > 0.2
+
+
+def test_no_baseline_means_no_summary():
+    """Absent, not a zero: a level of 0 would be a measured baseline sitting at no change."""
+    values = pl.DataFrame({COL_VARIANT: ["W2"], OUT_BIN_SCORE: [0.1]})
+    assert scoring.value_baseline(values, OUT_BIN_SCORE, scoring.Baseline(None, (), None)) is None

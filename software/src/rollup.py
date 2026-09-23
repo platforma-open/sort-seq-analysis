@@ -21,6 +21,7 @@ import polars as pl
 from constants import (
     COL_CONDITION,
     COL_GATE,
+    COL_PARENT_ID,
     COL_PROTEIN,
     COL_READS,
     COL_SAMPLE,
@@ -53,10 +54,12 @@ def pool_reads_by_protein(reads: pl.DataFrame, proteins: pl.DataFrame) -> pl.Dat
     """
     placed = reads.join(proteins, on=COL_VARIANT, how="inner")
     return (
-        placed.group_by(COL_SAMPLE, COL_CONDITION, COL_GATE, COL_PROTEIN)
+        # The parent is in the key, not just carried: a protein belongs to one parent, and the
+        # pooled rows keep their own depths scoped the way the per-variant rows were.
+        placed.group_by(COL_SAMPLE, COL_CONDITION, COL_GATE, COL_PARENT_ID, COL_PROTEIN)
         .agg(pl.col(COL_READS).sum())
         .rename({COL_PROTEIN: COL_VARIANT})
-        .select(COL_SAMPLE, COL_VARIANT, COL_READS, COL_CONDITION, COL_GATE)
+        .select(COL_SAMPLE, COL_VARIANT, COL_READS, COL_CONDITION, COL_GATE, COL_PARENT_ID)
         .sort(COL_SAMPLE, COL_VARIANT)
     )
 

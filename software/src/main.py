@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 from errors import Refusal
-from io_layer import read_positions, read_reads, read_variants
+from io_layer import read_parents, read_positions, read_reads, read_variants
 from params import load_params
 from pipeline import run
 
@@ -45,6 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="per-position parent residues (TSV); omit where the profiler column was absent",
     )
+    parser.add_argument(
+        "--parents",
+        type=Path,
+        default=None,
+        help="variant -> parent table (TSV); absent, the run is scored as one parent",
+    )
     parser.add_argument("--params", required=True, type=Path, help="parameter document (JSON)")
     parser.add_argument("--out-dir", required=True, type=Path, help="directory for score files and the manifest")
     return parser
@@ -57,9 +63,10 @@ def main(argv: list[str] | None = None) -> int:
     reads = read_reads(args.reads, params.sort_fraction_column)
     variants = read_variants(args.variants)
     positions = read_positions(args.positions)
+    parents = read_parents(args.parents)
 
     try:
-        manifest = run(reads, variants, positions, params, args.out_dir)
+        manifest = run(reads, variants, positions, parents, params, args.out_dir)
     except Refusal as refusal:
         # Nothing partial is written. Both streams — see the module docstring.
         message = f"REFUSED: {refusal}"

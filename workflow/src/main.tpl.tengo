@@ -29,6 +29,7 @@ buildColumnsTpl := assets.importTemplate(":build-columns")
 READS_FILE := "reads.tsv"
 VARIANTS_FILE := "variants.tsv"
 POSITIONS_FILE := "positions.tsv"
+PARENTS_FILE := "parents.tsv"
 PARAMS_FILE := "params.json"
 MANIFEST_FILE := "manifest.json"
 SORT_FRACTION_HEADER := "sortFraction"
@@ -136,6 +137,11 @@ wf.body(func(args) {
 	// axis came first.
 	proteinAxisSpec := undefined
 	proteinLinker := undefined
+	// The parent each variant was aligned to. A dataset may carry any number of parents, and
+	// the depths must be taken per parent — see stage 8 in the plan.
+	parentLinkAxisSpec := undefined
+	parentLinker := undefined
+	parentLinkerCount := 0
 	linkerColumns := columns.getColumns("linkers")
 	if !is_undefined(linkerColumns) {
 		for col in linkerColumns {
@@ -150,8 +156,19 @@ wf.body(func(args) {
 					proteinAxisSpec = axis
 					proteinLinker = col
 				}
+				if axis.name == "pl7.app/repertoire/parentId" {
+					parentLinkAxisSpec = axis
+					parentLinker = col
+					parentLinkerCount = parentLinkerCount + 1
+				}
 			}
 		}
+	}
+	// More than one match is no answer, as everywhere else: two profiler runs reaching one
+	// bundle must not have one of them picked by iteration order.
+	if parentLinkerCount != 1 {
+		parentLinkAxisSpec = undefined
+		parentLinker = undefined
 	}
 	// Roll-up happens exactly when the protein is knowable. Not a user setting.
 	rollUp := !is_undefined(proteinAxisSpec)
@@ -204,6 +221,19 @@ wf.body(func(args) {
 		variantsTsv = variantsBuilder.build()
 	}
 
+	// Variant -> the parent it was aligned to. Its own table rather than a column on the
+	// variants table, so it does not depend on a mutation count resolving.
+	parentsTsv := undefined
+	if !is_undefined(parentLinker) {
+		parentsBuilder := pframes.tsvFileBuilder()
+		parentsBuilder.setAxisHeader(variantAxisSpec.name, "variantKey")
+		parentsBuilder.setAxisHeader(parentLinkAxisSpec, "parentId")
+		parentsBuilder.add(parentLinker, { header: "link" })
+		parentsBuilder.mem("8GiB")
+		parentsBuilder.cpu(1)
+		parentsTsv = parentsBuilder.build()
+	}
+
 	// Exported only on exactly one match, which is the only case the computation can align its
 	// own codon numbering against.
 	positionsTsv := undefined
@@ -230,11 +260,13 @@ wf.body(func(args) {
 	if hasSortFraction {
 		paramsPayload.sortFractionColumn = SORT_FRACTION_HEADER
 	}
-	// Same rule, so a gate-ranking run writes the byte-identical document it always has and
-	// every cached result survives the upgrade. `inputGate` travels with `mode`.
-	if !is_undefined(args.mode) {
-		paramsPayload.mode = args.mode
+	// Naming an input is what asks for the enrichment. There is no mode to carry.
+	if !is_undefined(args.inputGate) {
 		paramsPayload.inputGate = args.inputGate
+	}
+	// Absent means ordered, which is every document written before the flag existed.
+	if !is_undefined(args.gatesOrdered) {
+		paramsPayload.gatesOrdered = args.gatesOrdered
 	}
 	if !is_undefined(args.baseline) {
 		paramsPayload.baseline = args.baseline
@@ -269,6 +301,10 @@ wf.body(func(args) {
 		execBuilder.addFile(POSITIONS_FILE, positionsTsv)
 		execBuilder.arg("--positions").arg(POSITIONS_FILE)
 	}
+	if !is_undefined(parentsTsv) {
+		execBuilder.addFile(PARENTS_FILE, parentsTsv)
+		execBuilder.arg("--parents").arg(PARENTS_FILE)
+	}
 
 	score := execBuilder.run()
 
@@ -286,7 +322,7 @@ wf.body(func(args) {
 		// The per-gate distribution stays on the dataset's own variant axis: it draws the
 		// variants that were measured, not the proteins they were pooled into.
 		measuredAxisSpec: variantAxisSpec,
-		parentIdAxisSpec: hasParentResidue ? parentResidueColumns[0].spec.axesSpec[0] : undefined,
+		parentIdAxisSpec: hasParentResidue ? parentResidueColumns[0].spec.axesSpec[0] : parentLinkAxisSpec,
 		positionAxisSpec: hasParentResidue ? parentResidueColumns[0].spec.axesSpec[1] : undefined,
 		baselineFiles: score.getFileSet("baselineFiles"),
 		abundanceSpec: abundanceSpec,

@@ -46,7 +46,7 @@
       "logo": "file:logos/block-logo.png",
       "url": "https://github.com/platforma-open/sort-seq-analysis",
       "support": "mailto:support@milaboratories.com",
-      "description": "Scores protein variants from a sort-seq (FACS bin) experiment: per condition, the read-weighted mean of the gate ranks each variant sorted into, and that value minus the parent's.",
+      "description": "Scores protein variants from a sort-seq (FACS bin) experiment. Ordered gates give each variant a read-weighted mean gate rank and its difference from the parent's. An unsorted input gate adds a per-gate enrichment, on ordered or unordered gates.",
       "longDescription": "file:../docs/description.md",
       "changelog": "file:./CHANGELOG.md",
       "tags": [

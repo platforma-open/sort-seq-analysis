@@ -35,6 +35,7 @@ from constants import (
     CODON_ABSENT_NO_SEQUENCE,
     COL_GATE,
     COL_MUTATION_COUNT,
+    COL_PARENT_ID,
     COL_READS,
     COL_VARIANT,
     MODE_CANCELLED,
@@ -115,9 +116,17 @@ def per_gate_frequencies(reads_c: pl.DataFrame, sort_fraction_column: str | None
     the floor would move every surviving variant's score, making two floor settings
     incomparable with nothing saying so.
 
+    **A depth is taken within one parent.** A dataset may carry any number of parents, and
+    pooling them scales every variant of a parent by how well its whole scaffold sorted:
+    `enrichment_pooled = enrichment_scoped x (parent's share of the gate / of the input)`.
+    Where no parent link resolved every row carries `PARENT_UNKNOWN`, so the group is
+    degenerate and the single-parent numbers are unchanged.
+
     Returns `reads_c` plus `_depth`, `gateFrequency` and `_weight`.
     """
-    with_depth = reads_c.with_columns(pl.col(COL_READS).sum().over(COL_GATE).alias(_DEPTH))
+    with_depth = reads_c.with_columns(
+        pl.col(COL_READS).sum().over([COL_PARENT_ID, COL_GATE]).alias(_DEPTH)
+    )
 
     # Zero frequency drops a zero-depth gate from both sums at once, so it needs no special
     # case downstream.
@@ -173,30 +182,67 @@ def apply_read_floor(means: pl.DataFrame, read_floor: int | None) -> pl.DataFram
     return means.filter(pl.col(TOTAL_READS) >= read_floor)
 
 
-def bin_scores(scored: pl.DataFrame, parent: Parent) -> pl.DataFrame | None:
-    """`binScore` for the variants scored here, or None where the column is not produced.
+def bin_scores(
+    scored: pl.DataFrame,
+    parents_by_id: dict[str, Parent],
+    variant_parent: pl.DataFrame | None,
+) -> tuple[pl.DataFrame | None, str | None]:
+    """`binScore` for the variants scored here, with the reference mode it was computed in.
+
+    Each variant is referenced to **its own** parent, so a dataset carrying several gets one
+    column whose every value is a difference from the right reference.
 
     Three outcomes:
 
-    * no mutation-count table — None, produced nowhere.
-    * parent unidentifiable — the cancelled form, equal to `gateRankMean`; the reference
-      mode in the domain tells a consumer which it is reading.
-    * parent identifiable but unscored here — absent at this condition, and deliberately
-      NOT the cancelled form. The fallback keys on identifiability, never on a missing score.
+    * no mutation-count table — `(None, None)`, produced nowhere.
+    * NO parent identified — the cancelled form over every scored variant, equal to
+      `gateRankMean`, mode `cancelled`. This is the state a one-parent run reaches when its
+      parent row is missing, and it is unchanged.
+    * at least one identified — the referenced form for their variants, mode `referenced`.
+      A variant whose own parent went unidentified, or whose parent fell below the floor, gets
+      **no row**: there is no reference to take a difference from, and emitting the cancelled
+      form beside referenced ones would put two meanings in one column under one mode.
     """
-    if not parent.produce_bin_score:
-        return None
+    if not any(parent.produce_bin_score for parent in parents_by_id.values()):
+        return None, None
 
-    if not parent.identified:
-        return scored.select(COL_VARIANT, pl.col(OUT_GATE_RANK_MEAN).alias(OUT_BIN_SCORE))
+    identified = {
+        parent_id: parent for parent_id, parent in parents_by_id.items() if parent.identified
+    }
+    if not identified:
+        return scored.select(COL_VARIANT, pl.col(OUT_GATE_RANK_MEAN).alias(OUT_BIN_SCORE)), MODE_CANCELLED
 
-    parent_row = scored.filter(pl.col(COL_VARIANT) == parent.variant_key)
-    if parent_row.height == 0:
-        # Known, but below the floor or with no reads here.
-        return None
+    # Only parents whose own row survived the floor here can reference anything.
+    parent_means: dict[str, float] = {}
+    for parent_id, parent in identified.items():
+        row = scored.filter(pl.col(COL_VARIANT) == parent.variant_key)
+        if row.height > 0:
+            parent_means[parent_id] = row.item(0, OUT_GATE_RANK_MEAN)
+    if not parent_means:
+        return None, None
 
-    parent_mean = parent_row.item(0, OUT_GATE_RANK_MEAN)
-    return scored.select(COL_VARIANT, (pl.col(OUT_GATE_RANK_MEAN) - parent_mean).alias(OUT_BIN_SCORE))
+    if variant_parent is None:
+        # One scope and no parent table: every scored variant belongs to it.
+        only = next(iter(parents_by_id))
+        placed = scored.select(COL_VARIANT).with_columns(pl.lit(only).alias(COL_PARENT_ID))
+    else:
+        placed = variant_parent
+
+    referenced = (
+        scored.join(placed, on=COL_VARIANT, how="left")
+        .filter(pl.col(COL_PARENT_ID).is_in(list(parent_means)))
+        .with_columns(
+            (
+                pl.col(OUT_GATE_RANK_MEAN)
+                - pl.col(COL_PARENT_ID).replace_strict(parent_means, return_dtype=pl.Float64)
+            ).alias(OUT_BIN_SCORE)
+        )
+        .select(COL_VARIANT, OUT_BIN_SCORE)
+        .sort(COL_VARIANT)
+    )
+    if referenced.height == 0:
+        return None, None
+    return referenced, MODE_REFERENCED
 
 
 def gate_enrichments(
@@ -388,6 +434,31 @@ def baseline_summary(
     }
 
 
+def value_baseline(values: pl.DataFrame, value_column: str, baseline: Baseline) -> dict | None:
+    """Level and spread of one **per-variant** value over the baseline set.
+
+    The sibling of `baseline_summary`, for a quantity that is already summed across gates.
+    `gateRankMean` and `binScore` are per variant, so their baseline is one number per
+    condition rather than one per gate.
+
+    None where the baseline resolved nothing, or where none of its variants survived here.
+    """
+    if not baseline.identified:
+        return None
+    rows = values.filter(pl.col(COL_VARIANT).is_in(list(baseline.variant_keys)))
+    if rows.height == 0:
+        return None
+    column = rows[value_column]
+    return {
+        "level": column.median(),
+        "spread": {
+            f"p{percentile}": column.quantile(percentile / 100, interpolation="linear")
+            for percentile in BASELINE_PERCENTILES
+        },
+        "variants": rows.height,
+    }
+
+
 def percentile_column(percentile: int) -> str:
     """The header a percentile takes in the per-position baseline file."""
     return f"baselineP{percentile}"
@@ -457,16 +528,19 @@ def baseline_by_position(
     }
 
 
-def top_scoring_variants(scored: pl.DataFrame, top_n: int) -> pl.DataFrame:
-    """The `top_n` highest-scoring variants, as a one-column frame of variant keys.
+def top_scoring_variants(
+    scored: pl.DataFrame, top_n: int, by: str = OUT_GATE_RANK_MEAN
+) -> pl.DataFrame:
+    """The `top_n` variants the view draws, as a one-column frame of variant keys.
+
+    `by` is the rank mean where the gates are ordered, and the read total where they are not —
+    an unordered ladder has no score to rank along, and picking by depth is the honest fallback.
 
     The variant-key tiebreaker is load-bearing: ties are ordinary at low read counts, and
     without it two runs over one input could emit different sets and break dedup.
     """
     return (
-        scored.sort([OUT_GATE_RANK_MEAN, COL_VARIANT], descending=[True, False])
-        .head(top_n)
-        .select(COL_VARIANT)
+        scored.sort([by, COL_VARIANT], descending=[True, False]).head(top_n).select(COL_VARIANT)
     )
 
 
@@ -475,6 +549,7 @@ def read_distribution(
     scored: pl.DataFrame,
     gate_ranks: dict[str, int],
     top_n: int,
+    by: str = OUT_GATE_RANK_MEAN,
 ) -> pl.DataFrame:
     """Per (drawn variant, collected gate): the frequency and the raw reads.
 
@@ -487,7 +562,9 @@ def read_distribution(
     frequency because four reads and four thousand draw the same profile.
     """
     collected = sorted(per_gate[COL_GATE].unique().to_list(), key=lambda gate: gate_ranks[gate])
-    grid = top_scoring_variants(scored, top_n).join(pl.DataFrame({COL_GATE: collected}), how="cross")
+    grid = top_scoring_variants(scored, top_n, by).join(
+        pl.DataFrame({COL_GATE: collected}), how="cross"
+    )
 
     observed = per_gate.select(COL_VARIANT, COL_GATE, OUT_GATE_FREQUENCY, pl.col(COL_READS).alias(OUT_GATE_READS))
 
