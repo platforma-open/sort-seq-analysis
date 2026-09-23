@@ -3,21 +3,19 @@
 Which nucleotide variants belong to one protein arrives as a `proteinKey` column from the
 `aaToNt` linker. This module never translates a variant to find out.
 
-The two quantities roll up differently:
+Both quantities pool the reads of a protein's nucleotide variants and then compute once, exactly
+as an amino-acid-grain run would. The regression test demands exact agreement for the rank mean.
+Pooling also keeps a depleted variant's reads in the protein: averaging per-variant ratios
+would have to drop every zero, and the protein would read as more enriched than it is.
 
-* Gate rank mean pools the reads, then computes once, in LINEAR space — a gate index is
-  already a log-fluorescence scale. This is algebraically what protein grain does upstream,
-  so the regression test demands exact agreement.
-* Enrichment averages in LOG space, weighted by reads. It is a ratio, so a linear average
-  lets one strongly-enriched variant dominate a protein whose others disagree.
-
-Every value carries `max(SE_counting, SE_replicate)` — how well the reads pin the number
-down, versus how much the variants disagree. The larger is the honest one.
+Every value carries `max(SE_counting, SE_replicate)`, in the value's own units — how well the
+reads pin the number down, versus how much the variants disagree. The larger is the honest one.
 """
 
 from __future__ import annotations
 
 import polars as pl
+
 from constants import (
     COL_CONDITION,
     COL_GATE,
@@ -26,24 +24,30 @@ from constants import (
     COL_READS,
     COL_SAMPLE,
     COL_VARIANT,
+    ENRICHMENT_ZERO_READS_PSEUDOCOUNT,
     OUT_GATE_ENRICHMENT,
     OUT_GATE_RANK_MEAN,
     OUT_GATE_READS,
     OUT_INPUT_READS,
-    OUT_UNCERTAINTY,
     OUT_NT_VARIANTS,
+    OUT_UNCERTAINTY,
 )
+from scoring import ONE_READ_ENRICHMENT
 
 TOTAL_READS = "totalReads"
 
 _RANK = "_rank"
 _WEIGHT = "_weight"
-_LOG = "_log"
 _VARIANCE = "_variance"
-_INVERSE_VARIANCE = "_inverseVariance"
+_COUNTING = "_counting"
+_REPLICATE = "_replicate"
+N_EFF = "_nEff"
+WEIGHT_TOTAL = "_weightTotal"
 
 
-def pool_reads_by_protein(reads: pl.DataFrame, proteins: pl.DataFrame) -> pl.DataFrame:
+def pool_reads_by_protein(
+    reads: pl.DataFrame, proteins: pl.DataFrame, sort_fraction_column: str | None = None
+) -> pl.DataFrame:
     """Relabel every nucleotide variant with its protein and sum the reads that collide.
 
     Returns the SAME shape that went in, with `variantKey` now holding a protein key, so
@@ -52,14 +56,16 @@ def pool_reads_by_protein(reads: pl.DataFrame, proteins: pl.DataFrame) -> pl.Dat
     Rows the linker does not place are dropped: translating them would contradict the
     linker, and keeping them as their own protein invents a singleton.
     """
+    # One value per (condition, gate) after `pool_replicates`, so the first is exact.
+    carried = [sort_fraction_column] if sort_fraction_column in reads.columns else []
     placed = reads.join(proteins, on=COL_VARIANT, how="inner")
     return (
         # The parent is in the key, not just carried: a protein belongs to one parent, and the
         # pooled rows keep their own depths scoped the way the per-variant rows were.
         placed.group_by(COL_SAMPLE, COL_CONDITION, COL_GATE, COL_PARENT_ID, COL_PROTEIN)
-        .agg(pl.col(COL_READS).sum())
+        .agg(pl.col(COL_READS).sum(), *(pl.col(name).first() for name in carried))
         .rename({COL_PROTEIN: COL_VARIANT})
-        .select(COL_SAMPLE, COL_VARIANT, COL_READS, COL_CONDITION, COL_GATE, COL_PARENT_ID)
+        .select(COL_SAMPLE, COL_VARIANT, COL_READS, COL_CONDITION, COL_GATE, COL_PARENT_ID, *carried)
         .sort(COL_SAMPLE, COL_VARIANT)
     )
 
@@ -69,117 +75,136 @@ def rank_mean_counting_error(
     means: pl.DataFrame,
     gate_ranks: dict[str, int],
 ) -> pl.DataFrame:
-    """The counting error on a pooled gate rank mean: `σ_gate / √N`.
+    """The counting error on a pooled gate rank mean: `σ_gate / √N_eff`.
 
     `σ² = Σ w_b (b − mean)² / Σ w_b`. Reads in one gate give σ = 0, pinned by depth alone;
     reads spread across the ladder are less certain at the same depth.
 
-    `N` is total reads over the collected gates. Unconfirmed: the spec says `√N_eff` without
-    defining `N_eff`. Worth settling before this number reaches a threshold.
+    `N_eff` is Kish's effective count, `(Σ w_b)² / Σ (w_b² / k_b)`. Each read carries weight
+    `w_b / k_b`, one over its gate's depth, so reads from a shallow gate count for more and the
+    mean rests on fewer independent reads than the total. With equal depths it is the total.
     """
     rank = pl.col(COL_GATE).replace_strict(gate_ranks, return_dtype=pl.Float64)
-    joined = per_gate.with_columns(rank.alias(_RANK)).join(
+    joined = per_gate.filter(pl.col(COL_READS) > 0).with_columns(rank.alias(_RANK)).join(
         means.select(COL_VARIANT, OUT_GATE_RANK_MEAN), on=COL_VARIANT, how="inner"
     )
 
     spread = (
         joined.with_columns(
-            (pl.col(_WEIGHT) * (pl.col(_RANK) - pl.col(OUT_GATE_RANK_MEAN)) ** 2).alias(_VARIANCE)
+            (pl.col(_WEIGHT) * (pl.col(_RANK) - pl.col(OUT_GATE_RANK_MEAN)) ** 2).alias(_VARIANCE),
+            (pl.col(_WEIGHT) ** 2 / pl.col(COL_READS)).alias("_weightSquare"),
         )
         .group_by(COL_VARIANT)
         .agg(
             pl.col(_VARIANCE).sum().alias("_numerator"),
             pl.col(_WEIGHT).sum().alias("_denominator"),
+            pl.col("_weightSquare").sum().alias("_weightSquares"),
             pl.col(COL_READS).sum().alias(TOTAL_READS),
         )
-        .filter((pl.col("_denominator") > 0) & (pl.col(TOTAL_READS) > 0))
+        .filter((pl.col("_denominator") > 0) & (pl.col("_weightSquares") > 0))
+        .with_columns((pl.col("_denominator") ** 2 / pl.col("_weightSquares")).alias(N_EFF))
         .with_columns(
-            ((pl.col("_numerator") / pl.col("_denominator")).sqrt() / pl.col(TOTAL_READS).sqrt())
+            ((pl.col("_numerator") / pl.col("_denominator")).sqrt() / pl.col(N_EFF).sqrt())
             .alias(OUT_UNCERTAINTY)
         )
     )
     return spread.select(COL_VARIANT, OUT_UNCERTAINTY, TOTAL_READS).sort(COL_VARIANT)
 
 
-def replicate_error(values: pl.DataFrame, value_column: str) -> pl.DataFrame:
-    """`SD(per-variant values) / √n`. `values` is one row per (protein, nucleotide variant).
+def variant_weights(per_gate: pl.DataFrame) -> pl.DataFrame:
+    """Each variant's total rank-mean weight, `Σ_b w_b` — its share of a pooled rank mean."""
+    return per_gate.group_by(COL_VARIANT).agg(pl.col(_WEIGHT).sum().alias(WEIGHT_TOTAL))
 
-    A protein with one variant gets null, NOT zero. Zero would claim perfect agreement where
-    there is nothing to compare, and the caller's max() would silently discard it.
+
+def replicate_error(
+    values: pl.DataFrame,
+    value_column: str,
+    weight_column: str,
+    by: tuple[str, ...] = (COL_PROTEIN,),
+) -> pl.DataFrame:
+    """The scatter of a protein's nucleotide variants, as the error of their weighted mean.
+
+    `SE² = n/(n−1) · Σ wᵢ² (xᵢ − x̄)² / (Σ wᵢ)²`, with `x̄` the w-weighted mean. The pooled score
+    IS that weighted mean — pooling weights each variant by its share of the reads — so this is
+    the scatter of the number actually reported. With equal weights it is `SD / √n`. A one-read
+    variant carries a one-read weight, so its wild value barely moves the estimate.
+
+    `values` is one row per (protein, nucleotide variant), plus `by`'s other keys. A group with
+    one variant gets null, NOT zero: zero would claim perfect agreement where there is nothing
+    to compare, and the caller's max() would silently discard it.
     """
+    keys = list(by)
+    weight = pl.col(weight_column).cast(pl.Float64)
+    centre = (weight * pl.col(value_column)).sum().over(keys) / weight.sum().over(keys)
     return (
-        values.group_by(COL_PROTEIN)
+        values.with_columns(centre.alias("_centre"))
+        .group_by(keys)
         .agg(
-            pl.col(value_column).std(ddof=1).alias("_sd"),
+            (weight**2 * (pl.col(value_column) - pl.col("_centre")) ** 2).sum().alias("_scatter"),
+            weight.sum().alias("_weights"),
             pl.len().alias(OUT_NT_VARIANTS),
         )
         .with_columns(
-            pl.when(pl.col(OUT_NT_VARIANTS) > 1)
-            .then(pl.col("_sd") / pl.col(OUT_NT_VARIANTS).sqrt())
+            pl.when((pl.col(OUT_NT_VARIANTS) > 1) & (pl.col("_weights") > 0))
+            .then(
+                (pl.col(OUT_NT_VARIANTS) / (pl.col(OUT_NT_VARIANTS) - 1) * pl.col("_scatter")).sqrt()
+                / pl.col("_weights")
+            )
             .otherwise(None)
             .alias(OUT_UNCERTAINTY)
         )
-        .select(pl.col(COL_PROTEIN).alias(COL_VARIANT), OUT_UNCERTAINTY, OUT_NT_VARIANTS)
-        .sort(COL_VARIANT)
+        .rename({COL_PROTEIN: COL_VARIANT})
+        .select(COL_VARIANT, *(key for key in keys if key != COL_PROTEIN), OUT_UNCERTAINTY, OUT_NT_VARIANTS)
+        .sort(COL_VARIANT, *(key for key in keys if key != COL_PROTEIN))
     )
 
 
-def rollup_enrichment(enrichments: pl.DataFrame, proteins: pl.DataFrame) -> pl.DataFrame:
-    """Per (protein, gate): the enrichment averaged over the protein's nucleotide variants.
+def enrichment_uncertainty(
+    pooled: pl.DataFrame, per_variant: pl.DataFrame, proteins: pl.DataFrame
+) -> pl.DataFrame:
+    """The error on each pooled protein enrichment, in the enrichment's own units.
 
-    Averaged in log space, returned on the linear scale so consumers read the same units as
-    the per-variant column. Inverse-variance weighted with the delta-method variance of a log
-    ratio, `varᵢ ≈ 1/k_gate,ᵢ + 1/k_input,ᵢ`; `SE = 1/√(Σ wᵢ)`.
+    `pooled` is `scoring.gate_enrichments` over the pooled reads, `per_variant` the same over the
+    nucleotide variants. Returns `pooled` plus `uncertainty` and `ntVariants`.
 
-    Zero-enrichment rows are dropped — log −∞ has no finite variance — which is a real
-    limitation, not a tidy-up. Their reads still count in the totals, so a protein resting on
-    little shows a thin `ntVariants` against a large read total.
+    * Counting: `E·√(1/k_gate + 1/k_input)`, the delta method on Poisson counts. A gate count of
+      zero uses a pseudocount in this term only, or a measured zero would claim no error at all.
+    * Replicate: `replicate_error` over the protein's nucleotide-variant enrichments at this gate,
+      weighted by input reads, over the variants that passed the floor. Null with fewer than two.
+
+    Symmetric, so it understates the upward error on a thin count; below ~20 reads on either side
+    the read columns beside it are the better guide.
     """
-    placed = enrichments.join(proteins, on=COL_VARIANT, how="inner")
-    usable = placed.filter(
-        (pl.col(OUT_GATE_ENRICHMENT) > 0)
-        & (pl.col(OUT_GATE_READS) > 0)
-        & (pl.col(OUT_INPUT_READS) > 0)
+    gate_reads = pl.max_horizontal(
+        pl.col(OUT_GATE_READS).cast(pl.Float64), pl.lit(ENRICHMENT_ZERO_READS_PSEUDOCOUNT)
     )
-    if usable.height == 0:
-        return usable.select(COL_VARIANT, COL_GATE).head(0)
-
-    weighted = usable.with_columns(
-        pl.col(OUT_GATE_ENRICHMENT).log().alias(_LOG),
-        (1.0 / pl.col(OUT_GATE_READS) + 1.0 / pl.col(OUT_INPUT_READS)).alias(_VARIANCE),
-    ).with_columns((1.0 / pl.col(_VARIANCE)).alias(_INVERSE_VARIANCE))
-
-    per_protein = weighted.group_by(COL_PROTEIN, COL_GATE).agg(
-        (pl.col(_LOG) * pl.col(_INVERSE_VARIANCE)).sum().alias("_numerator"),
-        pl.col(_INVERSE_VARIANCE).sum().alias("_denominator"),
-        pl.col(_LOG).std(ddof=1).alias("_sd"),
-        pl.len().alias(OUT_NT_VARIANTS),
-        pl.col(OUT_GATE_READS).sum().alias(OUT_GATE_READS),
-        pl.col(OUT_INPUT_READS).sum().alias(OUT_INPUT_READS),
+    counting = (
+        pl.col(ONE_READ_ENRICHMENT)
+        * gate_reads
+        * (1.0 / gate_reads + 1.0 / pl.col(OUT_INPUT_READS)).sqrt()
     )
 
-    counting = 1.0 / pl.col("_denominator").sqrt()
-    replicate = (
-        pl.when(pl.col(OUT_NT_VARIANTS) > 1)
-        .then(pl.col("_sd") / pl.col(OUT_NT_VARIANTS).sqrt())
-        .otherwise(None)
-    )
+    # Weighted by input reads: with the input depth shared, that is each variant's share of the
+    # pooled ratio.
+    replicate = replicate_error(
+        per_variant.join(proteins, on=COL_VARIANT, how="inner"),
+        OUT_GATE_ENRICHMENT,
+        OUT_INPUT_READS,
+        by=(COL_PROTEIN, COL_GATE),
+    ).rename({OUT_UNCERTAINTY: _REPLICATE})
 
     return (
-        per_protein.with_columns(
-            (pl.col("_numerator") / pl.col("_denominator")).exp().alias(OUT_GATE_ENRICHMENT),
+        pooled.with_columns(counting.alias(_COUNTING))
+        .join(replicate, on=[COL_VARIANT, COL_GATE], how="left")
+        .with_columns(
             # null means "no replicate estimate", not zero.
-            pl.max_horizontal(counting, replicate.fill_null(counting)).alias(OUT_UNCERTAINTY),
+            pl.max_horizontal(
+                pl.col(_COUNTING), pl.col(_REPLICATE).fill_null(pl.col(_COUNTING))
+            ).alias(OUT_UNCERTAINTY),
+            # A protein can pass the floor on pooled reads while none of its variants does alone.
+            pl.col(OUT_NT_VARIANTS).fill_null(0),
         )
-        .select(
-            pl.col(COL_PROTEIN).alias(COL_VARIANT),
-            COL_GATE,
-            OUT_GATE_ENRICHMENT,
-            OUT_UNCERTAINTY,
-            OUT_NT_VARIANTS,
-            OUT_GATE_READS,
-            OUT_INPUT_READS,
-        )
+        .drop(_COUNTING, _REPLICATE)
         .sort(COL_VARIANT, COL_GATE)
     )
 
@@ -199,7 +224,8 @@ def combine_errors(counting: pl.DataFrame, replicate: pl.DataFrame) -> pl.DataFr
             pl.max_horizontal(
                 pl.col(OUT_UNCERTAINTY), pl.col("_replicate").fill_null(pl.col(OUT_UNCERTAINTY))
             ).alias(OUT_UNCERTAINTY),
-            pl.col(OUT_NT_VARIANTS).fill_null(1),
+            # A protein can pass the floor on pooled reads while none of its variants does alone.
+            pl.col(OUT_NT_VARIANTS).fill_null(0),
         )
         .select(COL_VARIANT, OUT_UNCERTAINTY, OUT_NT_VARIANTS, TOTAL_READS)
         .sort(COL_VARIANT)

@@ -49,9 +49,13 @@ OUT_POSITION = "position"
 OUT_BASELINE_LEVEL = "baselineLevel"
 OUT_BASELINE_VARIANTS = "baselineVariants"
 
-# `uncertainty` is max(SE_counting, SE_replicate), never their average.
+# `uncertainty` is max(SE_counting, SE_replicate), never their average, in the value's units.
 OUT_UNCERTAINTY = "uncertainty"
 OUT_NT_VARIANTS = "ntVariants"
+
+# Stands in for a zero gate count in the enrichment's counting error only. Without it a
+# measured zero has an error of exactly zero, which claims certainty from no reads.
+ENRICHMENT_ZERO_READS_PSEUDOCOUNT = 0.5
 
 # --- Output file names ------------------------------------------------------
 # All must stay matchable by the file-set regexes below: the workflow collects them with
@@ -95,8 +99,8 @@ PARENT_ABSENT_NO_ZERO = "no-variant-with-zero-mutation-count"
 PARENT_ABSENT_MULTIPLE_ZERO = "multiple-variants-with-zero-mutation-count"
 
 # --- Run modes --------------------------------------------------------------
-# `gateRankMean` is produced in both. Enrichment adds the per-gate ratio and withholds
-# `binScore`, whose parent reference the baseline takes over.
+# A report, not a setting: `enrichment` where an input was named. The rank metrics follow the
+# gate order instead, so an ordered run with an input produces both families.
 
 RUN_MODE_GATE_RANKING = "gate-ranking"
 RUN_MODE_ENRICHMENT = "enrichment"

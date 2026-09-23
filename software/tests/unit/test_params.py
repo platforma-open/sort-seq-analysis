@@ -14,8 +14,6 @@ from conftest import GATE_RANKS, INPUT_GATE, write_params
 from constants import (
     BASELINE_SEQUENCE,
     BASELINE_SYNONYMOUS,
-    RUN_MODE_ENRICHMENT,
-    RUN_MODE_GATE_RANKING,
 )
 from params import load_params
 

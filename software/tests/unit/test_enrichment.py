@@ -41,9 +41,8 @@ def enrichments_for(rows, gate_ranks=None, input_gate=INPUT_GATE, read_floor=Non
     """Run the whole per-condition path a caller would, and hand back the long frame."""
     ranks = gate_ranks or GATE_RANKS
     per_gate = scoring.per_gate_frequencies(reads_frame(rows), None)
-    ranked = per_gate.filter(pl.col(COL_GATE) != input_gate)
-    scored = scoring.apply_read_floor(scoring.gate_rank_means(ranked, ranks), read_floor)
-    return scoring.gate_enrichments(per_gate, scored, ranks, input_gate)
+    members = scoring.enrichment_members(per_gate, input_gate, read_floor)
+    return scoring.gate_enrichments(per_gate, members, ranks, input_gate)
 
 
 def cell(frame, variant: str, gate: str) -> list[dict]:
@@ -220,10 +219,31 @@ def test_the_input_does_not_change_any_gates_depth():
 
 
 def test_the_floor_removes_variants_and_moves_no_enrichment():
-    """C holds 2 reads and falls below a floor of 10. Every surviving enrichment is the number
-    the unfloored run produced: the floor is a membership decision and the depths stay
+    """C holds 10 input reads and falls below a floor of 11. Every surviving enrichment is the
+    number the unfloored run produced: the floor is a membership decision and the depths stay
     pre-floor."""
-    cells = as_cells(enrichments_for(BASE_ROWS + INPUT_ROWS, read_floor=10))
+    cells = as_cells(enrichments_for(BASE_ROWS + INPUT_ROWS, read_floor=11))
 
     assert "C" not in {variant for _, variant in cells}
     assert cells == pytest.approx(expected_cells(variants=("P", "A", "B")), rel=REL)
+
+
+def test_the_floor_reads_the_input_not_the_sorted_gates():
+    """C has 2 sorted reads but 10 in the input, so a floor of 10 keeps it. The input count is
+    the denominator every ratio of C rests on, and so the evidence the floor weighs."""
+    cells = as_cells(enrichments_for(BASE_ROWS + INPUT_ROWS, read_floor=10))
+
+    assert cells == pytest.approx(expected_cells(), rel=REL)
+
+
+def test_a_variant_depleted_from_every_gate_is_a_measured_zero_at_each():
+    """D is in the input and in no sorted gate — what a stop codon looks like. It has no rank
+    mean, but its enrichment is 0 at every gate, not a missing row."""
+    rows = BASE_ROWS + INPUT_ROWS + [(INPUT_GATE, "D", 50)]
+    frame = enrichments_for(rows)
+
+    for gate in ("g1", "g2", "g3"):
+        (row,) = cell(frame, "D", gate)
+        assert row[OUT_GATE_ENRICHMENT] == 0.0
+        assert row[OUT_GATE_READS] == 0
+        assert row[OUT_INPUT_READS] == 50

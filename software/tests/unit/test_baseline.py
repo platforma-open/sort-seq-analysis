@@ -28,7 +28,6 @@ from conftest import (
 import codons
 import scoring
 from constants import (
-    OUT_BIN_SCORE,
     BASELINE_ABSENT_NEEDS_NUCLEOTIDE,
     BASELINE_ABSENT_NO_MUTATION_COUNT,
     BASELINE_ABSENT_NO_SYNONYMOUS,
@@ -39,6 +38,7 @@ from constants import (
     BASELINE_WILD_TYPE,
     COL_GATE,
     COL_VARIANT,
+    OUT_BIN_SCORE,
     OUT_GATE_ENRICHMENT,
 )
 

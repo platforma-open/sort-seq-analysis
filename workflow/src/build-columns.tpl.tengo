@@ -89,8 +89,10 @@ self.body(func(inputs) {
 		label: "Sort-Seq Analysis"
 	})
 
-	// The baseline option is claimed ONLY when it resolved; otherwise the ratio is against the
-	// input, which is still true and still useful.
+	// For the columns read against the baseline. Claimed ONLY when it resolved. The plain
+	// enrichment is always against the input, so it says "input" whatever the baseline: naming
+	// the baseline there would claim a reference the value does not use, and would move the
+	// column's identity whenever the user changed the baseline.
 	enrichmentReference := "input"
 	if !is_undefined(manifest.baselineOption) && manifest.baselineIdentified {
 		enrichmentReference = manifest.baselineOption
@@ -291,7 +293,7 @@ self.body(func(inputs) {
 						// Verbatim, as the condition is: a consumer matches on it and a
 						// substituted value would join back to nothing in the gate column.
 						"pl7.app/facsBin/gate": gate.gate,
-						"pl7.app/facsBin/referenceMode": enrichmentReference
+						"pl7.app/facsBin/referenceMode": "input"
 					},
 					annotations: gateAnnotations
 				},
@@ -480,7 +482,7 @@ self.body(func(inputs) {
 			if !is_undefined(entry.rolled.gateRankMeanFile) {
 			for quantity in [
 				{ column: "uncertainty", id: "gateRankMeanUncertaintyAa_", name: "pl7.app/facsBin/gateRankMeanUncertainty", type: "Double", fmt: ".3f", label: "Mean bin error (", desc: "The larger of the counting error and the disagreement between this protein's nucleotide variants.", order: "70150" },
-				{ column: "ntVariants", id: "gateRankMeanNtVariantsAa_", name: "pl7.app/facsBin/ntVariants", type: "Int", fmt: ",d", label: "NT variants (", desc: "How many synonymous nucleotide variants of this protein the score was pooled from.", order: "70160" }
+				{ column: "ntVariants", id: "gateRankMeanNtVariantsAa_", name: "pl7.app/facsBin/ntVariants", type: "Int", fmt: ",d", label: "NT variants (", desc: "How many of this protein's nucleotide variants passed the read floor and entered the error estimate.", order: "70160" }
 			] {
 				collect(scoreEntries, importOne(
 					scoreFiles[entry.rolled.gateRankMeanFile],
@@ -514,7 +516,7 @@ self.body(func(inputs) {
 					"pl7.app/format": ".3~g",
 					"pl7.app/isScore": "true",
 					"pl7.app/score/rankingOrder": "decreasing",
-					"pl7.app/description": "How much this protein is enriched in this gate relative to the unsorted input, averaged over its nucleotide variants in log space.",
+					"pl7.app/description": "How much this protein is enriched in this gate relative to the unsorted input, from the reads of all its nucleotide variants pooled.",
 					"pl7.app/facsBin/sortYieldCorrected": sortYieldCorrected,
 					"pl7.app/table/visibility": "default",
 					"pl7.app/table/orderPriority": "70300"
@@ -536,7 +538,7 @@ self.body(func(inputs) {
 							"pl7.app/facsBin/condition": condition,
 							"pl7.app/alphabet": "aminoacid",
 							"pl7.app/facsBin/gate": gate.gate,
-							"pl7.app/facsBin/referenceMode": enrichmentReference
+							"pl7.app/facsBin/referenceMode": "input"
 						},
 						annotations: gateAnno
 					},
@@ -546,8 +548,8 @@ self.body(func(inputs) {
 				// Both ride in the same file as the enrichment, and exist only at this level:
 				// a per-variant enrichment has no nucleotide variants to disagree.
 				for quantity in [
-					{ column: "uncertainty", id: "gateEnrichmentUncertaintyAa_", name: "pl7.app/facsBin/gateEnrichmentUncertainty", type: "Double", fmt: ".3f", label: "Enrichment error ", desc: "The larger of the counting error and the disagreement between this protein's nucleotide variants.", order: "70310" },
-					{ column: "ntVariants", id: "gateEnrichmentNtVariantsAa_", name: "pl7.app/facsBin/gateEnrichmentNtVariants", type: "Int", fmt: ",d", label: "Enrichment NT variants ", desc: "How many of this protein's nucleotide variants entered the average. One depleted to zero has no finite variance, so it cannot enter a log average and is not counted here.", order: "70320" }
+					{ column: "uncertainty", id: "gateEnrichmentUncertaintyAa_", name: "pl7.app/facsBin/gateEnrichmentUncertainty", type: "Double", fmt: ".3~g", label: "Enrichment error ", desc: "The standard error of the enrichment, in the same units: the larger of the counting error and the disagreement between this protein's nucleotide variants. Below about 20 reads it understates the error; check the read counts.", order: "70310" },
+					{ column: "ntVariants", id: "gateEnrichmentNtVariantsAa_", name: "pl7.app/facsBin/gateEnrichmentNtVariants", type: "Int", fmt: ",d", label: "Enrichment NT variants ", desc: "How many of this protein's nucleotide variants passed the read floor and entered the error estimate.", order: "70320" }
 				] {
 					collect(scoreEntries, importOne(
 						scoreFiles[gate.file],
@@ -561,7 +563,7 @@ self.body(func(inputs) {
 								"pl7.app/facsBin/condition": condition,
 								"pl7.app/alphabet": "aminoacid",
 								"pl7.app/facsBin/gate": gate.gate,
-								"pl7.app/facsBin/referenceMode": enrichmentReference
+								"pl7.app/facsBin/referenceMode": "input"
 							},
 							annotations: {
 								"pl7.app/label": quantity.label + gate.gate + " (" + condition + ")",

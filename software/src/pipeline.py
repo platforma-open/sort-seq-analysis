@@ -14,11 +14,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-import codons
 import polars as pl
+
+import codons
 import rollup
 import scoring
 from constants import (
+    BASELINE_PERCENTILES,
     COL_CONDITION,
     COL_GATE,
     COL_PARENT_ID,
@@ -26,24 +28,24 @@ from constants import (
     COL_PROTEIN,
     COL_READS,
     COL_RESIDUE,
+    COL_SAMPLE,
     COL_VARIANT,
     DISTRIBUTION_TOP_N,
+    OUT_BASELINE_LEVEL,
+    OUT_BASELINE_VARIANTS,
     OUT_BIN_SCORE,
+    OUT_ENRICHMENT_VS_BASELINE,
     OUT_GATE_ENRICHMENT,
     OUT_GATE_RANK_MEAN,
     OUT_GATE_READS,
     OUT_INPUT_READS,
+    OUT_NT_VARIANTS,
     OUT_POSITION,
     OUT_UNCERTAINTY,
-    OUT_NT_VARIANTS,
     PARENT_SUMMARY_FILE,
-    OUT_ENRICHMENT_VS_BASELINE,
+    PARENT_UNKNOWN,
     RUN_MODE_ENRICHMENT,
     RUN_MODE_GATE_RANKING,
-    OUT_BASELINE_LEVEL,
-    OUT_BASELINE_VARIANTS,
-    BASELINE_PERCENTILES,
-    PARENT_UNKNOWN,
 )
 from io_layer import (
     baseline_bin_score_file_name,
@@ -58,8 +60,8 @@ from io_layer import (
     write_table,
 )
 from params import Params
-from scoring import TOTAL_READS
 from pooling import pool_replicates
+from scoring import TOTAL_READS
 from validate import check_sort_fractions
 
 
@@ -418,13 +420,11 @@ def _score_one_condition(
     slice_c = reads.filter(pl.col(COL_CONDITION) == condition)
     ranked_c = ranked_gates(slice_c, params)
     input_c = input_rows_for(reads, condition, params)
-
     # A depth is summed over one gate's own rows, so including the reference moves no rung's
     # frequency.
-    per_gate = scoring.per_gate_frequencies(
-        pl.concat([ranked_c, input_c]) if input_c.height > 0 else ranked_c,
-        params.sort_fraction_column,
-    )
+    rows_c = pl.concat([ranked_c, input_c]) if input_c.height > 0 else ranked_c
+
+    per_gate = scoring.per_gate_frequencies(rows_c, params.sort_fraction_column)
     ranked_per_gate = ranked_gates(per_gate, params)
 
     # The measured level, always emitted. On a nucleotide run the baseline is measured here,
@@ -433,7 +433,7 @@ def _score_one_condition(
     scored = scoring.apply_read_floor(means, params.read_floor)
 
     # Computed either way: the denominator and the read total are rank-independent, so the
-    # membership `scored` carries is what the floor and the enrichment need. Only the *value*
+    # membership `scored` carries is what the floor and the distribution need. Only the *value*
     # is meaningless without an order, which is why it is written and not just computed.
     gate_rank_mean_file = None
     if params.scores_gate_rank:
@@ -447,19 +447,22 @@ def _score_one_condition(
     # already a log-fluorescence scale, so a second log would be wrong.
     rolled: dict | None = None
     scored_rolled = None
+    pooled_per_gate = None
     if proteins is not None:
-        pooled = rollup.pool_reads_by_protein(
-            pl.concat([ranked_c, input_c]) if input_c.height > 0 else ranked_c, proteins
-        )
-        pooled_ranked = ranked_gates(
-            scoring.per_gate_frequencies(pooled, params.sort_fraction_column), params
-        )
+        pooled = rollup.pool_reads_by_protein(rows_c, proteins, params.sort_fraction_column)
+        # Kept whole, input included: the protein enrichment below reads its denominators here.
+        pooled_per_gate = scoring.per_gate_frequencies(pooled, params.sort_fraction_column)
+        pooled_ranked = ranked_gates(pooled_per_gate, params)
         means_rolled = scoring.gate_rank_means(pooled_ranked, params.gate_ranks)
         scored_rolled = scoring.apply_read_floor(means_rolled, params.read_floor)
         errors = rollup.combine_errors(
             rollup.rank_mean_counting_error(pooled_ranked, scored_rolled, params.gate_ranks),
+            # Floor-passing variants only, each weighted by its share of the pooled mean.
             rollup.replicate_error(
-                means.join(proteins, on=COL_VARIANT, how="inner"), OUT_GATE_RANK_MEAN
+                scored.join(rollup.variant_weights(ranked_per_gate), on=COL_VARIANT, how="inner")
+                .join(proteins, on=COL_VARIANT, how="inner"),
+                OUT_GATE_RANK_MEAN,
+                rollup.WEIGHT_TOTAL,
             ),
         )
         rolled = {
@@ -474,7 +477,7 @@ def _score_one_condition(
                 if params.scores_gate_rank
                 else None
             ),
-            # Filled in below on a gate-ranking run; binScore is not produced in enrichment mode.
+            # Filled in below where the gates are ordered; without an order there is no binScore.
             "binScoreFile": None,
             "referenceMode": None,
             "gateEnrichments": [],
@@ -526,7 +529,10 @@ def _score_one_condition(
     if params.scores_enrichment:
         # Order matters: the baseline is read from these unpooled rows.
         enrichments = scoring.gate_enrichments(
-            per_gate, scored, params.gate_ranks, params.input_gate
+            per_gate,
+            scoring.enrichment_members(per_gate, params.input_gate, params.read_floor),
+            params.gate_ranks,
+            params.input_gate,
         )
         if enrichments is not None:
             # One baseline per parent. `summaries` keeps the single-parent shape for the
@@ -537,19 +543,27 @@ def _score_one_condition(
                 enrichments, summaries, by_parent, position_rows, variant_parent,
                 params, index, out_dir,
             )
-            # Only now, after the baseline: average in log space, weighted by reads.
-            if rolled is not None:
-                rolled["gateEnrichments"] = _write_gate_enrichments(
-                    rollup.rollup_enrichment(enrichments, proteins),
-                    summaries,
-                    by_parent,
-                    {},
-                    protein_parent,
-                    params,
-                    index,
-                    out_dir,
-                    rolled=True,
+            # Only now, after the baseline. From the pooled reads, as an amino-acid-grain run
+            # would compute it; the per-variant values supply only the replicate error.
+            if rolled is not None and pooled_per_gate is not None:
+                pooled_enrichments = scoring.gate_enrichments(
+                    pooled_per_gate,
+                    scoring.enrichment_members(pooled_per_gate, params.input_gate, params.read_floor),
+                    params.gate_ranks,
+                    params.input_gate,
                 )
+                if pooled_enrichments is not None:
+                    rolled["gateEnrichments"] = _write_gate_enrichments(
+                        rollup.enrichment_uncertainty(pooled_enrichments, enrichments, proteins),
+                        summaries,
+                        by_parent,
+                        {},
+                        protein_parent,
+                        params,
+                        index,
+                        out_dir,
+                        rolled=True,
+                    )
 
     return {
         # Verbatim: this lands in a domain key a consumer matches on.
@@ -890,12 +904,31 @@ def input_rows_for(reads: pl.DataFrame, condition: str, params: Params) -> pl.Da
 
     Deliberately not filtered by `retained_conditions`: a condition value that exists only to
     label the input is excluded from scoring, and that must not discard the reference.
+
+    Where the run's input spans several conditions, they are pooled into one row per variant.
+    Left apart, every variant would take one reference row per condition and emit duplicate keys.
     """
     if params.input_gate is None:
         return reads.head(0)
     all_input = reads.filter(pl.col(COL_GATE) == params.input_gate)
     own = all_input.filter(pl.col(COL_CONDITION) == condition)
-    return own if own.height > 0 else all_input
+    if own.height > 0 or all_input[COL_CONDITION].n_unique() <= 1:
+        return own if own.height > 0 else all_input
+
+    # One sample label for every row, as `pool_replicates` builds it: the protein roll-up groups
+    # on the sample, so a per-variant label would split a protein across references.
+    samples = "+".join(sorted(all_input[COL_SAMPLE].unique().to_list()))
+    keys = [COL_GATE, COL_VARIANT, COL_PARENT_ID]
+    fixed = {*keys, COL_READS, COL_SAMPLE, COL_CONDITION}
+    carried = [name for name in all_input.columns if name not in fixed]
+    return (
+        all_input.sort(COL_CONDITION)
+        .group_by(keys)
+        .agg(pl.col(COL_READS).sum(), *(pl.col(name).first() for name in carried))
+        .with_columns(pl.lit(samples).alias(COL_SAMPLE), pl.lit(condition).alias(COL_CONDITION))
+        .select(all_input.columns)
+        .sort(COL_VARIANT)
+    )
 
 
 def _input_depth(input_c: pl.DataFrame, params: Params) -> int | None:

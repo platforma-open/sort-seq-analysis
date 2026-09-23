@@ -6,6 +6,7 @@
  * 2. Column values are snapshotted on the user's gesture, never by a watcher: a watcher on an
  *    output writing to `data` is the hairpin, and two clients would race.
  */
+import { BASELINE_AVAILABLE } from "@platforma-open/milaboratories.sort-seq-analysis.model";
 import type { SUniversalPColumnId } from "@platforma-sdk/model";
 import { getSingleColumnData, type PObjectId } from "@platforma-sdk/model";
 import {
@@ -268,8 +269,10 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
           </template>
         </PlDropdown>
 
-        <!-- Offered whether or not there is an input: both runs benefit, for different reasons. -->
+        <!-- Offered whether or not there is an input: both runs benefit, for different reasons.
+             Hidden while the workflow withholds the baseline columns — see `BASELINE_AVAILABLE`. -->
         <PlDropdown
+          v-if="BASELINE_AVAILABLE"
           v-model="app.model.data.baseline"
           :options="baselineOptions"
           label="Baseline"
@@ -283,7 +286,7 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
         </PlDropdown>
 
         <PlTextField
-          v-if="isEnrichment && app.model.data.baseline === 'sequence'"
+          v-if="BASELINE_AVAILABLE && isEnrichment && app.model.data.baseline === 'sequence'"
           v-model="app.model.data.baselineSequence"
           label="Baseline variant key"
           clearable
@@ -291,7 +294,11 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
           <template #tooltip> The key of the one nucleotide sequence to measure against. </template>
         </PlTextField>
 
-        <PlAlert v-if="synonymousUnavailable" type="warn" label="Synonymous baseline unavailable">
+        <PlAlert
+          v-if="BASELINE_AVAILABLE && synonymousUnavailable"
+          type="warn"
+          label="Synonymous baseline unavailable"
+        >
           This dataset is protein-level, where synonymous variants have already been merged into the
           wild type. The run will succeed and report no baseline. Pick a nucleotide-level dataset,
           or choose another baseline.
@@ -350,8 +357,9 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
         clearable
       >
         <template #tooltip>
-          Drops variants with too few reads to give a meaningful gate profile. Leave empty to score
-          every variant with reads in at least one gate.
+          Drops variants with too few reads to give a meaningful gate profile. For the per-gate
+          enrichment it counts the variant's reads in the unsorted input instead. Leave empty to
+          score every variant with reads in at least one gate.
         </template>
       </PlNumberField>
     </PlAccordionSection>

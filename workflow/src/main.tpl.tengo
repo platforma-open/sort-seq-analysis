@@ -137,6 +137,7 @@ wf.body(func(args) {
 	// axis came first.
 	proteinAxisSpec := undefined
 	proteinLinker := undefined
+	proteinLinkerCount := 0
 	// The parent each variant was aligned to. A dataset may carry any number of parents, and
 	// the depths must be taken per parent — see stage 8 in the plan.
 	parentLinkAxisSpec := undefined
@@ -155,6 +156,7 @@ wf.body(func(args) {
 					variantAxisSpec.domain["pl7.app/alphabet"] == "nucleotide" {
 					proteinAxisSpec = axis
 					proteinLinker = col
+					proteinLinkerCount = proteinLinkerCount + 1
 				}
 				if axis.name == "pl7.app/repertoire/parentId" {
 					parentLinkAxisSpec = axis
@@ -165,7 +167,12 @@ wf.body(func(args) {
 		}
 	}
 	// More than one match is no answer, as everywhere else: two profiler runs reaching one
-	// bundle must not have one of them picked by iteration order.
+	// bundle must not have one of them picked by iteration order. Without the roll-up the run
+	// still scores at nucleotide grain.
+	if proteinLinkerCount != 1 {
+		proteinAxisSpec = undefined
+		proteinLinker = undefined
+	}
 	if parentLinkerCount != 1 {
 		parentLinkAxisSpec = undefined
 		parentLinker = undefined

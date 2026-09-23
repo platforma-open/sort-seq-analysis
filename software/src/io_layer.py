@@ -11,9 +11,10 @@ import json
 from pathlib import Path
 
 import polars as pl
+
 from constants import (
-    BASELINE_FILE_PATTERN,
     BASELINE_BIN_SCORE_FILE_PATTERN,
+    BASELINE_FILE_PATTERN,
     BASELINE_GATE_FILE_PATTERN,
     COL_CONDITION,
     COL_GATE,

@@ -19,10 +19,11 @@ from dataclasses import dataclass, field
 from itertools import product
 
 import polars as pl
+
 from constants import (
-    CODON_ABSENT_NOT_DEGENERATE,
     CODON_ABSENT_NO_SEQUENCE,
     CODON_ABSENT_NO_SINGLE_CODON_VARIANTS,
+    CODON_ABSENT_NOT_DEGENERATE,
     CODON_ABSENT_PARENT_OUT_OF_FRAME,
     CODON_ABSENT_PARENT_UNIDENTIFIED,
     CODON_BASE_MIN_FRACTION,

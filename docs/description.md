@@ -24,7 +24,8 @@ When the gates are ordered, every variant gets two values per condition:
 ## An Unsorted Input: Per-Gate Enrichment
 
 Name the gate value holding your unsorted library, and every variant gets an **enrichment** for each gate:
-its share of reads in that gate divided by its share in the input.
+its share of reads in that gate divided by its share in the input. A variant the gate did not collect
+gets 0, and for the enrichment the read-count floor counts the variant's reads in the input.
 
 The enrichment is computed for every gate the run covers, ordered or not. So it works both on gates that
 only differ in what they select, and on gates that sit along a binding axis. An ordered run with an input
@@ -33,8 +34,9 @@ gets an enrichment per gate on top of its mean-bin scores.
 ## Nucleotide-Level Data
 
 When the dataset carries nucleotide variants, the block scores each one and then rolls them up per protein.
-The synonymous variants of one protein rarely agree exactly. That disagreement is reported beside each
-protein score as a **noise estimate**, together with how many nucleotide variants it was measured on.
+A protein's score pools the reads of all its nucleotide variants. Beside each protein enrichment sits an
+**error** in the same units: the larger of the read-count error and the disagreement between the
+protein's nucleotide variants, together with how many variants it was measured on.
 
 The two levels are shown as two tables, because they sit on different axes and have different row counts.
 

@@ -20,8 +20,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import codons
 import polars as pl
+
+import codons
 from constants import (
     BASELINE_ABSENT_NEEDS_NUCLEOTIDE,
     BASELINE_ABSENT_NO_MUTATION_COUNT,
@@ -63,6 +64,8 @@ _DENOMINATOR = "_denominator"
 _INPUT_FREQUENCY = "_inputFrequency"
 
 TOTAL_READS = "totalReads"
+# Prefixed like the working columns: carried for the error, never written to a file.
+ONE_READ_ENRICHMENT = "_oneReadEnrichment"
 
 
 @dataclass(frozen=True)
@@ -245,16 +248,36 @@ def bin_scores(
     return referenced, MODE_REFERENCED
 
 
+def enrichment_members(
+    per_gate: pl.DataFrame, input_gate: str, read_floor: int | None
+) -> pl.DataFrame:
+    """The variants an enrichment is computed for: every variant the input holds.
+
+    Not the rank-mean membership. A variant the sort depleted from every gate has no rank mean,
+    but its enrichment is a measured 0 at each gate — what a stop codon should show.
+
+    The floor applies to the input reads, the denominator every ratio of the variant rests on.
+    """
+    reference = per_gate.filter((pl.col(COL_GATE) == input_gate) & (pl.col(COL_READS) > 0))
+    if read_floor is not None:
+        reference = reference.filter(pl.col(COL_READS) >= read_floor)
+    return reference.select(COL_VARIANT).unique().sort(COL_VARIANT)
+
+
 def gate_enrichments(
     per_gate: pl.DataFrame,
-    scored: pl.DataFrame,
+    members: pl.DataFrame,
     gate_ranks: dict[str, int],
     input_gate: str,
 ) -> pl.DataFrame | None:
-    """Per (scored variant, collected gate): the enrichment against the input, with both
+    """Per (member variant, collected gate): the enrichment against the input, with both
     read counts.
 
     `per_gate` must INCLUDE the input gate's rows — its frequencies are the denominators.
+    `members` is `enrichment_members`, which carries the floor's decision.
+
+    Also returns `ONE_READ_ENRICHMENT`, the enrichment one read in that gate would give. It is
+    what puts an error on a measured zero, where the ratio itself carries no scale.
 
     None where there is no usable reference: the column is absent at this condition, not
     present-and-empty.
@@ -291,9 +314,8 @@ def gate_enrichments(
         return None
 
     # Cross join so a variant absent from a gate gets its measured 0 rather than a hole.
-    # `scored` carries the floor's decision.
     grid = (
-        scored.select(COL_VARIANT)
+        members.select(COL_VARIANT)
         .join(reference, on=COL_VARIANT, how="inner")
         .join(pl.DataFrame({COL_GATE: collected}), how="cross")
     )
@@ -303,17 +325,30 @@ def gate_enrichments(
         OUT_GATE_FREQUENCY,
         pl.col(COL_READS).alias(OUT_GATE_READS),
     )
+    # Per (parent, gate), so a variant the gate never saw still gets its own parent's depth.
+    depths = ranked.group_by(COL_PARENT_ID, COL_GATE).agg(pl.col(_DEPTH).first())
+    variant_parent = per_gate.select(COL_VARIANT, COL_PARENT_ID).unique()
 
     return (
         grid.join(observed, on=[COL_VARIANT, COL_GATE], how="left")
+        .join(variant_parent, on=COL_VARIANT, how="left")
+        .join(depths, on=[COL_PARENT_ID, COL_GATE], how="left")
         .with_columns(
             pl.col(OUT_GATE_FREQUENCY).fill_null(0.0),
             pl.col(OUT_GATE_READS).fill_null(0),
         )
         .with_columns(
-            (pl.col(OUT_GATE_FREQUENCY) / pl.col(_INPUT_FREQUENCY)).alias(OUT_GATE_ENRICHMENT)
+            (pl.col(OUT_GATE_FREQUENCY) / pl.col(_INPUT_FREQUENCY)).alias(OUT_GATE_ENRICHMENT),
+            (1.0 / pl.col(_DEPTH) / pl.col(_INPUT_FREQUENCY)).alias(ONE_READ_ENRICHMENT),
         )
-        .select(COL_VARIANT, COL_GATE, OUT_GATE_ENRICHMENT, OUT_GATE_READS, OUT_INPUT_READS)
+        .select(
+            COL_VARIANT,
+            COL_GATE,
+            OUT_GATE_ENRICHMENT,
+            OUT_GATE_READS,
+            OUT_INPUT_READS,
+            ONE_READ_ENRICHMENT,
+        )
         .sort(COL_VARIANT, COL_GATE)
     )
 

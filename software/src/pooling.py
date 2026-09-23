@@ -12,6 +12,7 @@ as is what to do when they disagree on the sort fraction (here: averaged and fla
 from __future__ import annotations
 
 import polars as pl
+
 from constants import (
     COL_CONDITION,
     COL_GATE,

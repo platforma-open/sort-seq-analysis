@@ -49,10 +49,6 @@ export const FacsBin = {
    */
   GateDomain: GATE,
   ReferenceModeDomain: "pl7.app/facsBin/referenceMode",
-  /**
-   * The per-gate baseline, keyed on `[parentId]` rather than the variant axis — one row per
-   * parent, so a dataset carrying several reports each. Emitted on every run.
-   */
   /** Per parent, for the whole run. Emitted in every mode, so the parents are always visible. */
   ParentVariants: "pl7.app/facsBin/parentVariants",
   ParentReads: "pl7.app/facsBin/parentReads",
@@ -60,6 +56,10 @@ export const FacsBin = {
   GateEnrichmentVsBaseline: "pl7.app/facsBin/gateEnrichmentVsBaseline",
   /** The noise band on `binScore`, per condition. Gate-ranking mode only. */
   BinScoreBaselineLevel: "pl7.app/facsBin/binScoreBaselineLevel",
+  /**
+   * The per-gate baseline, keyed on `[parentId]` rather than the variant axis — one row per
+   * parent, so a dataset carrying several reports each.
+   */
   GateBaselineLevel: "pl7.app/facsBin/gateBaselineLevel",
   GateBaselineP5: "pl7.app/facsBin/gateBaselineP5",
   GateBaselineP95: "pl7.app/facsBin/gateBaselineP95",
@@ -73,11 +73,11 @@ export const FacsBin = {
 } as const;
 
 /**
- * What this number is referenced to. The first two describe `binScore`'s parent cancellation;
- * the rest name the baseline a `gateEnrichment` is read against.
+ * What this number is referenced to. The first two describe `binScore`'s parent cancellation.
  *
- * `Input` covers a declared baseline that could not be resolved: the ratio is still against the
- * input, and claiming the baseline would describe a reference the column does not have.
+ * `Input` is what a `gateEnrichment` always carries: it is a ratio against the input whatever
+ * baseline was chosen. The baseline tokens belong to the columns read against a baseline, and
+ * fall back to `Input` where the declared baseline could not be resolved.
  */
 export const ReferenceMode = {
   Referenced: "referenced",

@@ -917,3 +917,74 @@ def test_the_protein_level_carries_no_baseline_band(tmp_path):
     assert manifest["conditions"][0]["binScoreBaselineFile"] is not None
     # ...and there is no protein-grain band anywhere in the entry.
     assert "binScoreBaselineFile" not in (manifest["conditions"][0]["rolled"] or {})
+
+
+def test_sort_yield_correction_survives_the_protein_roll_up(tmp_path):
+    """The pooling dropped the sort-fraction column, so every corrected run at nucleotide grain
+    failed with ColumnNotFoundError. Corrected, the protein level must still be produced."""
+    rows = [("g1", "P", 50), ("g2", "P", 50), ("g1", "s1", 30), ("g2", "s1", 70),
+            ("in", "P", 100), ("in", "s1", 100)]
+    variants = pl.DataFrame(
+        {"variantKey": ["P", "s1"], "proteinKey": ["pP", "pP"], "mutationCount": [0, 1]},
+        schema_overrides={"mutationCount": pl.Int64},
+    )
+    reads = reads_frame(rows, fractions={"g1": 0.4, "g2": 0.6, "in": None})
+
+    code, out_dir, manifest = invoke(
+        tmp_path, reads, variants, gate_ranks={"g1": 1, "g2": 2},
+        sort_fraction_column="sortFraction", input_gate="in",
+    )
+
+    assert code == 0
+    rolled = manifest["conditions"][0]["rolled"]
+    assert rolled["gateRankMeanFile"] is not None
+    assert len(rolled["gateEnrichments"]) == 2
+    frame = pl.read_csv(out_dir / rolled["gateEnrichments"][0]["file"], separator="\t")
+    assert "uncertainty" in frame.columns
+    assert "_oneReadEnrichment" not in frame.columns
+
+
+def test_the_protein_rank_mean_error_reads_only_floor_passing_variants(tmp_path):
+    """s2 holds 1 read and falls below a floor of 10. It still pools into pP's score, but its
+    rank mean — a whole gate, from one read — must not reach the replicate error."""
+    rows = [("g1", "P", 50), ("g2", "P", 50), ("g1", "s1", 40), ("g2", "s1", 60),
+            ("g1", "s2", 1)]
+    variants = pl.DataFrame(
+        {"variantKey": ["P", "s1", "s2"], "proteinKey": ["pP", "pP", "pP"],
+         "mutationCount": [0, 1, 1]},
+        schema_overrides={"mutationCount": pl.Int64},
+    )
+
+    code, out_dir, manifest = invoke(
+        tmp_path, reads_frame(rows), variants, gate_ranks={"g1": 1, "g2": 2}, read_floor=10
+    )
+
+    assert code == 0
+    rolled = manifest["conditions"][0]["rolled"]
+    assert read_scores(out_dir, rolled["gateRankMeanFile"], "ntVariants") == {"pP": 2}
+
+
+def test_a_condition_borrowing_several_inputs_pools_them_into_one_reference(tmp_path):
+    """A and B each carry their own input; C has none and falls back to the run's. Left apart,
+    each variant would take one reference row per condition and C's files would repeat every
+    key. Pooled, C reads against A's and B's inputs summed."""
+    rows = (
+        [("g1", "a", 10), ("g2", "a", 10), ("g1", "b", 30), ("g2", "b", 10), ("in", "a", 20), ("in", "b", 20)]
+    )
+    reads = pl.concat(
+        [
+            reads_frame(rows, condition="A"),
+            reads_frame(rows, condition="B"),
+            reads_frame([r for r in rows if r[0] != "in"], condition="C"),
+        ]
+    )
+
+    code, out_dir, manifest = invoke(tmp_path, reads, gate_ranks={"g1": 1, "g2": 2}, input_gate="in")
+
+    assert code == 0
+    (entry,) = [c for c in manifest["conditions"] if c["condition"] == "C"]
+    assert entry["inputDepth"] == 80
+    for gate in entry["gateEnrichments"]:
+        frame = pl.read_csv(out_dir / gate["file"], separator="\t")
+        assert frame["variantKey"].is_unique().all()
+        assert sorted(frame["inputReads"].to_list()) == [40, 40]

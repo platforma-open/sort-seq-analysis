@@ -1,5 +1,6 @@
 import {
   BlockModelV3,
+  type BlockRenderCtx,
   createPFrameForGraphs,
   createPlDataTableV3,
   DataColumn,
@@ -28,6 +29,13 @@ import type { BlockArgs, BlockData, RunManifest } from "./types";
 export { blockDataModel, defaultDistributionGraphState } from "./dataModel";
 export * from "./columns";
 export * from "./types";
+
+/**
+ * Whether the baseline is offered. Off for this release: the workflow withholds every
+ * baseline-derived column (`EMIT_BASELINE_COLUMNS` in `build-columns.tpl.tengo`), so a baseline
+ * pick would stale the block and change nothing a user can see. Turn both on together.
+ */
+export const BASELINE_AVAILABLE = false;
 
 /**
  * Every configuration rule, checked here and nowhere else. The one data-value rule (sort
@@ -100,7 +108,12 @@ export function settingsIssues(data: BlockData): string[] {
 
   // The other two baseline options name their variants from the data. Only checked in
   // enrichment mode, where `sequence` is the only mode that projects it.
-  if (data.inputGate !== undefined && data.baseline === "sequence" && !data.baselineSequence) {
+  if (
+    BASELINE_AVAILABLE &&
+    data.inputGate !== undefined &&
+    data.baseline === "sequence" &&
+    !data.baselineSequence
+  ) {
     issues.push("Enter the nucleotide sequence's variant key to use as the baseline");
   }
 
@@ -145,7 +158,7 @@ export function distributionPlotTitle(
  * One scores table for one grain. A nucleotide run emits two column families on two axes, told
  * apart by the `pl7.app/alphabet` domain. `undefined` where the run produced none.
  */
-function buildScoresTable(ctx: any, alphabet: string) {
+function buildScoresTable(ctx: BlockRenderCtx<BlockArgs, BlockData>, alphabet: string) {
   const all = ctx.outputs?.resolve("scoresPf")?.getPColumns() as
     | PColumn<PColumnValues>[]
     | undefined;
@@ -262,9 +275,14 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
       // name a single variant, which just repeats the reference `binScore` already subtracts.
       // A gate-ranking block made before this projected nothing here, and still does unless
       // the user picks synonymous, so no instance goes stale.
-      baseline: enrichment || data.baseline === "synonymous" ? data.baseline : undefined,
+      baseline:
+        BASELINE_AVAILABLE && (enrichment || data.baseline === "synonymous")
+          ? data.baseline
+          : undefined,
       baselineSequence:
-        enrichment && data.baseline === "sequence" ? data.baselineSequence : undefined,
+        BASELINE_AVAILABLE && enrichment && data.baseline === "sequence"
+          ? data.baselineSequence
+          : undefined,
     };
   })
 
@@ -426,10 +444,6 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
   /** Why the block is not runnable, in the user's words — the platform only says "incomplete". */
   .output("settingsIssues", (ctx) => settingsIssues(ctx.data))
 
-  /**
-   * What this configuration will produce, in the user's words. It replaces the mode control:
-   * the two facts decide the run, and this states the consequence rather than asking for it.
-   */
   /**
    * What this configuration will produce, in the user's words. It replaces the mode control:
    * the two facts decide the run, and this states the consequence rather than asking for it.

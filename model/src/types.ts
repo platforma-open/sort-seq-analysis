@@ -111,10 +111,6 @@ export type BlockData = {
    * writes grid state into nothing and loses it on reload.
    */
   ntResultsTableState: PlDataTableStateV2;
-  /**
-   * The baseline table's grid state. Its own, because that table is keyed on `[parentId]` and
-   * shares no column with either score table.
-   */
   /** One chart state per condition. Which condition is on screen lives in the route instead,
    *  so two clients do not fight over it. */
   distributionGraphStates: Record<string, GraphMakerState>;
@@ -162,16 +158,16 @@ export type GateEnrichment = {
   /** Null where no baseline was resolved, or where none of its variants survived the floor here. */
   baseline: BaselineSummary | null;
   /**
-   * The baseline split by codon position, as a TSV file name. Null outside the synonymous
-   * option. Keyed on this block's own zero-based codon offset, NOT the profiler's position
-   * axis; one out puts every baseline on the wrong residue and looks plausible.
-   */
-  /**
    * The same baseline per gate, one row per parent, keyed on `[parentId]`. Emitted on every
    * run: the annotations above can describe one baseline, and a dataset may carry several
    * parents.
    */
   baselineGateFile: string | null;
+  /**
+   * The baseline split by codon position, as a TSV file name. Null outside the synonymous
+   * option. Keyed on this block's own zero-based codon offset, NOT the profiler's position
+   * axis; one out puts every baseline on the wrong residue and looks plausible.
+   */
   baselinePositionFile: string | null;
   /** How many codon positions carried a value, so a thin split is visible without opening it. */
   baselinePositions: number;
@@ -231,8 +227,9 @@ export type ParentSummary = {
  * level, where it was measured.
  */
 export type RolledSummary = {
-  gateRankMeanFile: string;
-  /** Null outside gate-ranking mode, where `binScore` is not produced. */
+  /** Null where the gates carry no order, and no rank metric is produced. */
+  gateRankMeanFile: string | null;
+  /** Null where the gates carry no order, or where no parent could reference the proteins. */
   binScoreFile: string | null;
   referenceMode: "referenced" | "cancelled" | null;
   gateEnrichments: GateEnrichment[];
@@ -243,7 +240,8 @@ export type RolledSummary = {
 export type ConditionSummary = {
   /** Verbatim, exactly as it appears in the metadata column. */
   condition: string;
-  gateRankMeanFile: string;
+  /** Null where the gates carry no order, and no rank metric is produced. */
+  gateRankMeanFile: string | null;
   /** Null where the column is not produced at this condition. */
   binScoreFile: string | null;
   /**
@@ -275,6 +273,15 @@ export type ConditionSummary = {
 /** The manifest — the only thing the caller reads to know what the run produced. */
 export type RunManifest = {
   mode: RunMode;
+  /** Whether the gates lie along a binding axis. False means no rank metric was produced. */
+  gatesOrdered: boolean;
+  /** Whether an input was named, so the run produced a per-gate enrichment. */
+  scoresEnrichment: boolean;
+  /**
+   * Whether the protein level was produced. The workflow picks the protein axis on this, not on
+   * whether the linker resolved.
+   */
+  rolledUp: boolean;
   parentIdentified: boolean;
   /** Null also covers "no mutation-count table at all", which is a third state, not a reason. */
   parentAbsenceReason: string | null;
@@ -286,11 +293,18 @@ export type RunManifest = {
   baselineVariants: number;
   /** Inferred once for the run. */
   codonScheme: CodonSchemeSummary;
+  /** Whether this block's codon offsets were matched to the profiler's position labels. */
+  positionAlignment: { verified: boolean; reason: string | null; parentId: string | null };
   /**
    * Every parent the run scored. One entry is the ordinary case; the top-level fields above
    * are that parent's. With several, those fields are the conjunction and these carry each.
    */
   parents: ParentSummary[];
+  /**
+   * The per-parent counts as a TSV file name, keyed on `[parentId]`. Null where no variant was
+   * placed under a parent.
+   */
+  parentSummaryFile: string | null;
   /**
    * The gate ladder, already rendered: `"1 = NEG, 2 = MP, ..."`. Ordered weakest first, so a
    * consumer can say what a mean bin of 2.6 means. Empty where the gates carry no order.

@@ -23,6 +23,7 @@ nothing partial is produced.
 from __future__ import annotations
 
 import polars as pl
+
 from constants import (
     COL_CONDITION,
     COL_GATE,
