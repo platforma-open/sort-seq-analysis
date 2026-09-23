@@ -1,16 +1,9 @@
 <script setup lang="ts">
 /**
- * The Statistics button and the dialog it opens.
+ * The Statistics button and the dialog it opens. Every row reports a failure no chart reveals.
  *
- * Every row here reports a failure no chart reveals: a gate order set wrong inverts the score,
- * a condition that collected only some of its gates changes what the denominator ran over, and
- * an unidentifiable parent changes what `binScore` means.
- *
- * `@click.stop` is required — the dialog closes on an outside click, and the opening click
- * would otherwise bubble up and be read as outside, closing it in the tick it opened.
- *
- * Open state is a local `ref`, not `BlockData`: in `data` it is shared, so one person opening
- * the dialog would open it for everyone with the project open.
+ * `@click.stop` is required: the dialog closes on an outside click, and the opening click would
+ * bubble up and be read as outside. Open state is a local ref — in `data` it would be shared.
  */
 import { getSingleColumnData, type PObjectId } from "@platforma-sdk/model";
 import {
@@ -33,28 +26,57 @@ const isOpen = ref(false);
 const manifest = computed(() => app.model.outputs.manifest);
 
 /**
- * Why no parent row was identified, or `undefined` where one was — the identified case raises
- * nothing, since an alert on every healthy run trains the reader to skip the real warning.
- *
- * Three absent cases, each changing what `binScore` means. The third — no mutation-count
- * column at all, so no bin score anywhere — arrives as a null reason rather than a named one.
+ * Why no parent row was identified, or `undefined` where one was — an alert on every healthy
+ * run trains the reader to skip the real warning. The third case, no mutation-count column at
+ * all, arrives as a null reason rather than a named one.
  */
 const parentAbsence = computed(() => {
   const value = manifest.value;
   if (!value || value.parentIdentified) return undefined;
   if (value.parentAbsenceReason === "no-variant-with-zero-mutation-count") {
-    return "No variant has an amino-acid mutation count of zero. Bin scores are emitted in the cancelled form.";
+    return 'No variant has an amino-acid mutation count of zero. "Mean bin vs parent" is emitted in the cancelled form.';
   }
   if (value.parentAbsenceReason === "multiple-variants-with-zero-mutation-count") {
-    return "More than one variant has an amino-acid mutation count of zero. Bin scores are emitted in the cancelled form.";
+    return 'More than one variant has an amino-acid mutation count of zero. "Mean bin vs parent" is emitted in the cancelled form.';
   }
-  return "No mutation-count column was available, so no bin score was produced.";
+  return 'No mutation-count column was available, so "Mean bin vs parent" was not produced.';
 });
 
 /**
- * `sampleId` -> sample name. The label column has one axis, so `axesData`'s single entry lines
- * up with `data` by position. Empty until resolved, or where upstream published no labels.
+ * Why the chosen baseline produced nothing, or `undefined` otherwise — same rule as
+ * `parentAbsence`. Each reason is phrased as the action that fixes it, which is why the
+ * computation reports four tokens rather than one "no baseline".
  */
+const baselineAbsence = computed(() => {
+  const value = manifest.value;
+  if (!value || value.baselineOption === null || value.baselineIdentified) return undefined;
+  if (value.baselineAbsenceReason === "synonymous-baseline-needs-nucleotide-grain") {
+    return "The synonymous baseline needs a nucleotide-level dataset. At protein level those variants have already been merged into the wild type.";
+  }
+  if (value.baselineAbsenceReason === "no-synonymous-variants") {
+    return "No variant in this library is synonymous with the wild type, so there is nothing to average.";
+  }
+  if (value.baselineAbsenceReason === "named-sequence-absent-from-dataset") {
+    return "The variant key given as the baseline sequence appears nowhere in this dataset. Check it for a typo.";
+  }
+  if (value.baselineAbsenceReason === "parent-not-identified") {
+    return "The wild-type baseline needs a single variant with zero mutations, and this run has none.";
+  }
+  return "No mutation-count column was available, so the baseline could not be resolved.";
+});
+
+/** Each condition's input depth. Every ratio rests on it and no chart shows it. */
+const inputDepths = computed(() => {
+  const value = manifest.value;
+  if (!value || value.mode !== "enrichment") return undefined;
+  return value.conditions.map((entry) => ({
+    condition: entry.condition,
+    depth: entry.inputDepth ?? 0,
+    gates: entry.gateEnrichments.length,
+  }));
+});
+
+/** `sampleId` -> sample name. One axis, so `axesData[0]` lines up with `data` by position. */
 const sampleLabels = useWatchFetch(
   () => ({
     pframe: app.model.outputs.sampleLabelPframe,
@@ -82,6 +104,23 @@ function labelFor(sampleId: string): string {
   return sampleLabels.value?.[sampleId] ?? sampleId;
 }
 
+/**
+ * The parents the run scored, or `undefined` where there was one — the ordinary case raises
+ * nothing. Shown because every depth is taken within a parent, so the number of them changes
+ * what each score is relative to.
+ */
+const parents = computed(() => {
+  const rows = manifest.value?.parents;
+  if (!rows || rows.length < 2) return undefined;
+  return rows.map((row) => ({
+    key: row.parentId ?? "(unplaced)",
+    label: row.parentId ?? "not placed under any parent",
+    variants: row.variants,
+    reads: row.reads,
+    identified: row.parentIdentified,
+  }));
+});
+
 /** The pooled groups, or `undefined` where nothing was pooled — see `parentAbsence` on why. */
 const pooling = computed(() => {
   const groups = manifest.value?.pooledGroups;
@@ -100,11 +139,9 @@ function gateList(gates: { gate: string; depth: number }[]): string {
 }
 
 /**
- * These labels are display-only. `referenceMode` is also a domain value downstream consumers
- * select on, so renaming the emitted values to match would join to nothing.
- *
- * "no parent" and "not produced" are different situations: the first is a real bin score that
- * equals the gate rank mean because the reference term cancelled, the second is no column.
+ * Display-only: `referenceMode` is a domain value consumers select on, so renaming the emitted
+ * values would join to nothing. "no parent" is a real score whose reference cancelled;
+ * "not produced" is no column at all.
  */
 function binScoreCell(entry: {
   binScoreFile: string | null;
@@ -133,8 +170,7 @@ function binScoreCell(entry: {
   <PlDialogModal v-model="isOpen" width="880px" :close-on-outside-click="true">
     <template #title>Run statistics</template>
 
-    <!-- Hardcoding `not-ready` would tell the user the block was unconfigured during the very
-         run this view exists to watch. -->
+    <!-- Hardcoding `not-ready` would read as "unconfigured" during the run this view watches. -->
     <PlAgOverlayLoading
       v-if="!manifest"
       :params="{
@@ -147,6 +183,37 @@ function binScoreCell(entry: {
       <PlAlert v-if="parentAbsence" type="warn">
         <template #title>Parent row not identified</template>
         {{ parentAbsence }}
+      </PlAlert>
+
+      <PlAlert v-if="baselineAbsence" type="warn">
+        <template #title>No baseline was produced</template>
+        {{ baselineAbsence }} The enrichment values are unaffected — they are still ratios against
+        the input, with no baseline level marked on them.
+      </PlAlert>
+
+      <PlAlert v-if="parents" type="info">
+        <template #title>{{ parents.length }} parents in this dataset</template>
+        Every depth is taken within a parent, so a variant's score is relative to its own reference
+        and not to the other libraries in the same run.
+        <ul>
+          <li v-for="row in parents" :key="row.key">
+            {{ row.label }} — {{ row.variants }} variant(s), {{ row.reads }} read(s)<template
+              v-if="!row.identified"
+              >, no parent row identified</template
+            >
+          </li>
+        </ul>
+      </PlAlert>
+
+      <PlAlert v-if="inputDepths" type="info">
+        <template #title>Enrichment against the unsorted input</template>
+        Every ratio below is against these reads. A thin input makes per-cell values texture rather
+        than something to threshold on.
+        <ul>
+          <li v-for="row in inputDepths" :key="row.condition">
+            {{ row.condition }} — input depth {{ row.depth }}, {{ row.gates }} gate(s) scored
+          </li>
+        </ul>
       </PlAlert>
 
       <PlAlert v-if="pooling" type="warn">
@@ -168,7 +235,7 @@ function binScoreCell(entry: {
             <th>Condition</th>
             <th>Gates Collected (pre-floor depths)</th>
             <th>Variants Scored</th>
-            <th>Bin Score</th>
+            <th>Mean bin vs parent</th>
             <th>Sort-Yield Correction</th>
             <th>Fraction Sum</th>
           </tr>
@@ -180,17 +247,14 @@ function binScoreCell(entry: {
             <td>{{ entry.variantsScored }}</td>
             <td>{{ binScoreCell(entry) }}</td>
             <td>{{ entry.sortYieldCorrected ? "applied" : "not applied" }}</td>
-            <!-- A sum short of 1.0 is legitimate — a partially collected condition looks like
-                 this, and nothing renormalizes it. -->
+            <!-- A sum short of 1.0 is legitimate and is never renormalized. -->
             <td>{{ entry.sortFractionSum ?? "—" }}</td>
           </tr>
         </tbody>
       </table>
     </template>
 
-    <!-- A successful run prints these same facts to stdout, so showing the log beside the
-         table is the content twice. A refused run writes no manifest and prints only to the
-         log, and this is the sole surface carrying that reason. -->
+    <!-- A refused run writes no manifest, so the log is the only surface carrying the reason. -->
     <PlLogView
       v-if="!manifest && app.model.outputs.logHandle"
       :log-handle="app.model.outputs.logHandle"
@@ -199,8 +263,7 @@ function binScoreCell(entry: {
 </template>
 
 <style scoped>
-/* The SDK has no primitive for a handful of read-only key numbers, and a data table would be
-   heavier than the content. */
+/* The SDK has no primitive for a handful of read-only numbers. */
 .summary {
   width: 100%;
   border-collapse: collapse;

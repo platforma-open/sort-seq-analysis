@@ -1,17 +1,10 @@
 /**
- * The shared vocabulary this block reads and writes, and the predicates it locates inputs
- * with.
+ * The shared vocabulary this block reads and writes, and the predicates it locates inputs with.
  *
- * Every column this block reads is located by its spec — axes, domain, annotations — never by a
- * literal column name. The narrowing that *is* permitted, and used below, matches a shared
- * vocabulary term: a name saying what a column *means*, identical across every block emitting
- * one. Forbidden is a lookup keyed on a particular column's own instance name.
- *
- * The variant axis is the reason this matters rather than being style. It is defined twice
- * upstream with incompatible domains, so identifying *it* by name resolves to the wrong
- * axis on some projects and the right one on others — with output of ordinary shape and
- * plausible content either way. Hence the abundance predicate below matches on axis
- * **count** plus annotations, and never names an axis.
+ * Columns are located by spec, never by instance name. The variant axis is defined twice
+ * upstream with incompatible domains, so naming it resolves to the wrong axis on some projects
+ * with plausible output either way — hence the abundance predicate matches on axis COUNT plus
+ * annotations and never names an axis.
  */
 
 import type { AnchoredPColumnSelector, PColumnSpec, PObjectSpec } from "@platforma-sdk/model";
@@ -37,17 +30,67 @@ export const PColumnName = {
   Mutations: "pl7.app/repertoire/mutations",
 } as const;
 
+/** "Which gate" — an axis in the distribution view, a domain key on the enrichment columns.
+ *  One constant so a rename cannot break the join silently. */
+const GATE = "pl7.app/facsBin/gate";
+
 /** Names this block mints, all under one namespace segment. */
 export const FacsBin = {
   GateRankMean: "pl7.app/facsBin/gateRankMean",
   BinScore: "pl7.app/facsBin/binScore",
+  GateEnrichment: "pl7.app/facsBin/gateEnrichment",
   GateFrequency: "pl7.app/facsBin/gateFrequency",
   GateReads: "pl7.app/facsBin/gateReads",
-  GateAxis: "pl7.app/facsBin/gate",
+  GateAxis: GATE,
   ConditionDomain: "pl7.app/facsBin/condition",
+  /**
+   * A domain key, NOT an axis. The Mutation Explorer's score picker only sees columns keyed on
+   * the variant axis alone, so a gate axis would hide these and add a one-choice selector.
+   */
+  GateDomain: GATE,
   ReferenceModeDomain: "pl7.app/facsBin/referenceMode",
+  /** Per parent, for the whole run. Emitted in every mode, so the parents are always visible. */
+  ParentVariants: "pl7.app/facsBin/parentVariants",
+  ParentReads: "pl7.app/facsBin/parentReads",
+  /** The enrichment divided by its own parent's baseline. 1.0 is a variant of no effect. */
+  GateEnrichmentVsBaseline: "pl7.app/facsBin/gateEnrichmentVsBaseline",
+  /** The noise band on `binScore`, per condition. Gate-ranking mode only. */
+  BinScoreBaselineLevel: "pl7.app/facsBin/binScoreBaselineLevel",
+  /**
+   * The per-gate baseline, keyed on `[parentId]` rather than the variant axis — one row per
+   * parent, so a dataset carrying several reports each.
+   */
+  GateBaselineLevel: "pl7.app/facsBin/gateBaselineLevel",
+  GateBaselineP5: "pl7.app/facsBin/gateBaselineP5",
+  GateBaselineP95: "pl7.app/facsBin/gateBaselineP95",
+  GateBaselineVariants: "pl7.app/facsBin/gateBaselineVariants",
   SortYieldCorrectedAnnotation: "pl7.app/facsBin/sortYieldCorrected",
+  /** The baseline as measured at this column's gate. Absent where none was resolved. */
+  BaselineLevelAnnotation: "pl7.app/facsBin/baselineLevel",
+  /** The four percentiles, as a JSON object. Never a standard error — see `BaselineSummary`. */
+  BaselineSpreadAnnotation: "pl7.app/facsBin/baselineSpread",
+  BaselineVariantsAnnotation: "pl7.app/facsBin/baselineVariants",
 } as const;
+
+/**
+ * What this number is referenced to. The first two describe `binScore`'s parent cancellation.
+ *
+ * `Input` is what a `gateEnrichment` always carries: it is a ratio against the input whatever
+ * baseline was chosen. The baseline tokens belong to the columns read against a baseline, and
+ * fall back to `Input` where the declared baseline could not be resolved.
+ */
+export const ReferenceMode = {
+  Referenced: "referenced",
+  Cancelled: "cancelled",
+  Input: "input",
+  BaselineWildType: "wild-type",
+  BaselineSynonymous: "synonymous",
+  BaselineSequence: "sequence",
+} as const;
+
+/** Domain key on the variant axis that tells the nucleotide grain from the protein grain. */
+export const AlphabetDomain = "pl7.app/alphabet";
+export const Alphabet = { Nucleotide: "nucleotide", AminoAcid: "aminoacid" } as const;
 
 function isPColumnSpec(spec: PObjectSpec): spec is PColumnSpec {
   return spec.kind === "PColumn";
@@ -60,16 +103,11 @@ function annotation(spec: PColumnSpec, key: string): string | undefined {
 /**
  * The anchor: per-sample abundance on the variant grain.
  *
- * Both annotation conditions are required and neither is redundant. The profiler emits a
- * second primary abundance column that is normalized (`pl7.app/readFraction`), so the
- * primary marker alone selects two candidates. And three further columns in the same block
- * carry the abundance marker without the primary one — one on the mutation-count axis, two
- * per-variant totals — so a predicate loose enough to admit them would compute a bin score
- * over aggregated totals and emit output of ordinary shape.
+ * Neither annotation is redundant. The profiler emits a second primary abundance column that is
+ * normalized, and three more carry the abundance marker without the primary one — admitting
+ * those computes a bin score over aggregated totals with output of ordinary shape.
  *
- * Two axes are required by count rather than by name: the sample axis and the variant axis
- * are what a per-sample-per-variant abundance has, and naming the variant axis is the live
- * defect described at the top of this file.
+ * Two axes by COUNT, not name — see the file header.
  */
 export function isAbundanceAnchor(spec: PObjectSpec): boolean {
   if (!isPColumnSpec(spec)) return false;
@@ -81,25 +119,11 @@ export function isAbundanceAnchor(spec: PObjectSpec): boolean {
 }
 
 /**
- * Per-sample metadata, in the anchor's context — the one option list the three roles are
- * picked from.
+ * Per-sample metadata — the option list the three roles are picked from, so it is expected to
+ * resolve to many. Which role a column plays is the user's pick; no spec predicate can tell.
  *
- * **This predicate is expected to resolve to many.** It produces the option list, not an
- * answer. A spec predicate can establish that a column *is* per-sample metadata; it cannot
- * establish which role a given one plays, because the only per-column discriminator is a
- * value drawn from the user's own data. The roles are assigned by the user, one pick each.
- *
- * `pl7.app/metadata` is the column's **name**, not an annotation — every per-sample metadata
- * column upstream is literally named that, with the sample axis as its only axis and its
- * user-facing header in `pl7.app/label`. Matching it as an annotation matches nothing, and does
- * so silently: the option list comes back empty and the pickers look broken while the metadata
- * is plainly loaded.
- *
- * This is still a match on a shared-vocabulary *term*, not on a particular column's instance
- * name.
- *
- * The single axis is bound to the anchor's sample axis by the anchor context rather than by
- * name.
+ * `pl7.app/metadata` is the column's NAME, not an annotation. Matching it as an annotation
+ * matches nothing silently: the list comes back empty and the pickers look broken.
  */
 export const metadataSelector: AnchoredPColumnSelector = {
   axes: [{ anchor: "main", idx: 0 }],
@@ -117,18 +141,15 @@ export const sampleLabelSelector: AnchoredPColumnSelector = {
 };
 
 /**
- * The variants' mutation count. Resolved in the workflow rather than here — this constant
- * exists so the model and the workflow state the same predicate, and so a reader can see
- * all three in one place.
+ * The variants' mutation count. Resolved in the workflow; this constant keeps the two sides
+ * stating one predicate.
  *
- * The alphabet domain is load-bearing rather than a detail. The profiler emits the count at
- * two grains and keeps them apart by exactly this domain. At the nucleotide grain a library
- * of synonymous barcodes for one wild-type protein yields several rows with a count of
- * zero, which reads as the parent being *unidentifiable* — so `binScore` would be emitted
- * in the cancelled form for a run whose parent is in fact perfectly well defined.
+ * The grain follows the dataset and is deliberately NOT pinned to an alphabet. The axis
+ * reference does the work: the profiler emits both counts on their own variant axes, so exactly
+ * one is reachable from any anchor, and the nucleotide column counts nucleotide mutations — so
+ * only the exact parent has zero at either grain.
  */
 export const mutationCountSelector: AnchoredPColumnSelector = {
   axes: [{ anchor: "main", idx: 1 }],
   name: PColumnName.MutationCount,
-  domain: { "pl7.app/alphabet": "aminoacid" },
 };

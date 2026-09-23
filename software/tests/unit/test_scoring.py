@@ -190,7 +190,9 @@ def test_parent_subtraction_referenced():
     assert parent.identified
     assert parent.reference_mode == MODE_REFERENCED
 
-    scores = scores_as_dict(scoring.bin_scores(scored, parent), "binScore")
+    frame, mode = scoring.bin_scores(scored, {"": parent}, None)
+    assert mode == MODE_REFERENCED
+    scores = scores_as_dict(frame, "binScore")
     assert scores == pytest.approx({"P": 0.0, "A": 1.9 - 2.6, "B": 1.5 - 2.6, "C": 1.5 - 2.6}, rel=REL)
 
 
@@ -203,7 +205,9 @@ def test_cancelled_form_where_no_variant_has_zero_mutation_count():
     assert parent.absence_reason == PARENT_ABSENT_NO_ZERO
     assert parent.reference_mode == MODE_CANCELLED
 
-    scores = scores_as_dict(scoring.bin_scores(scored, parent), "binScore")
+    frame, mode = scoring.bin_scores(scored, {"": parent}, None)
+    assert mode == MODE_CANCELLED
+    scores = scores_as_dict(frame, "binScore")
     assert scores == pytest.approx(BASE_MEANS, rel=REL)
 
 
@@ -224,7 +228,7 @@ def test_no_mutation_count_table_produces_bin_score_nowhere():
     assert not parent.produce_bin_score
     assert parent.absence_reason is None
     assert parent.reference_mode is None
-    assert scoring.bin_scores(scored, parent) is None
+    assert scoring.bin_scores(scored, {"": parent}, None) == (None, None)
 
 
 def test_bin_score_absent_where_parent_is_identifiable_but_unscored():
@@ -248,7 +252,7 @@ def test_bin_score_absent_where_parent_is_identifiable_but_unscored():
 
     assert parent.identified
     assert "P" not in means_as_dict(scored)
-    assert scoring.bin_scores(scored, parent) is None
+    assert scoring.bin_scores(scored, {"": parent}, None) == (None, None)
     # gateRankMean is still there for everything that cleared the floor.
     assert set(means_as_dict(scored)) == {"A", "B"}
 
