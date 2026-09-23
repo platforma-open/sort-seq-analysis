@@ -316,7 +316,7 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
         <PlDropdown
           v-model="app.model.data.inputGate"
           :options="inputGateOptions"
-          label="Input sample"
+          label="Unsorted input"
           clearable
         >
           <template #tooltip>
