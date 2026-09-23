@@ -47,6 +47,7 @@ from constants import (
     RUN_MODE_ENRICHMENT,
     RUN_MODE_GATE_RANKING,
 )
+from errors import Refusal
 from io_layer import (
     baseline_bin_score_file_name,
     baseline_file_name,
@@ -212,10 +213,36 @@ def _protein_parent(
             .sort(COL_VARIANT)
         )
     placed = variants.select(COL_VARIANT, COL_PROTEIN).join(parents, on=COL_VARIANT, how="inner")
-    return (
+    mapping = (
         placed.select(pl.col(COL_PROTEIN).alias(COL_VARIANT), COL_PARENT_ID)
         .unique()
         .sort(COL_VARIANT)
+    )
+    _refuse_split_proteins(mapping)
+    return mapping
+
+
+def _refuse_split_proteins(mapping: pl.DataFrame) -> None:
+    """Refuse a protein reached from more than one parent.
+
+    A protein key is its translated sequence, while the parent comes from nucleotide alignment.
+    Two parents whose codons differ but whose protein does not would share every protein key,
+    and the rolled level would emit one row per parent under a key that carries no parent axis.
+    """
+    split = (
+        mapping.group_by(COL_VARIANT)
+        .agg(pl.col(COL_PARENT_ID).sort())
+        .filter(pl.col(COL_PARENT_ID).list.len() > 1)
+        .sort(COL_VARIANT)
+    )
+    if split.is_empty():
+        return
+    detail = "; ".join(
+        f"{row[COL_VARIANT]} <- {', '.join(row[COL_PARENT_ID])}" for row in split.head(5).to_dicts()
+    )
+    raise Refusal(
+        f"{split.height} protein(s) are reached from more than one parent, so each would be "
+        f"scored once per parent under one key: {detail}"
     )
 
 

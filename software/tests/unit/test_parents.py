@@ -20,6 +20,7 @@ import pipeline
 import pooling
 import scoring
 from constants import COL_PARENT_ID, OUT_GATE_ENRICHMENT, OUT_GATE_RANK_MEAN
+from errors import Refusal
 
 REL = 1e-12
 
@@ -384,3 +385,35 @@ def test_a_parent_the_linker_does_not_place_is_unidentified_at_protein_grain():
     assert at_protein["A"].identified is True
     assert at_protein["B"].identified is False
     assert at_protein["B"].variant_key is None
+
+
+def test_a_protein_reached_from_two_parents_is_refused():
+    """A protein key is a translated sequence; a parent comes from nucleotide alignment. Two
+    parents whose codons differ but whose protein does not would give one protein two rows
+    under a key that carries no parent axis."""
+    variants = pl.DataFrame(
+        {
+            "variantKey": ["P_A", "P_B"],
+            "proteinKey": ["pShared", "pShared"],
+        }
+    )
+    parents = pl.DataFrame({"variantKey": ["P_A", "P_B"], COL_PARENT_ID: ["A", "B"]})
+
+    with pytest.raises(Refusal, match="more than one parent"):
+        pipeline._protein_parent(variants, parents)
+
+
+def test_one_parent_per_protein_passes():
+    variants = pl.DataFrame(
+        {"variantKey": ["P_A", "a1", "P_B"], "proteinKey": ["pA", "pA", "pB"]}
+    )
+    parents = pl.DataFrame(
+        {"variantKey": ["P_A", "a1", "P_B"], COL_PARENT_ID: ["A", "A", "B"]}
+    )
+
+    mapping = pipeline._protein_parent(variants, parents)
+
+    assert mapping.to_dicts() == [
+        {"variantKey": "pA", COL_PARENT_ID: "A"},
+        {"variantKey": "pB", COL_PARENT_ID: "B"},
+    ]
