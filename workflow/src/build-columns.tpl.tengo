@@ -154,7 +154,7 @@ self.body(func(inputs) {
 					"pl7.app/alphabet": measuredAlphabet
 				},
 				annotations: {
-					"pl7.app/label": "Mean bin (" + condition + ")",
+					"pl7.app/label": "Mean Bin (" + condition + ")",
 					"pl7.app/format": ".2f",
 					"pl7.app/isScore": "true",
 					// "decreasing" means higher-is-favourable in the ranking path. It reads like
@@ -190,7 +190,7 @@ self.body(func(inputs) {
 						"pl7.app/facsBin/referenceMode": entry.referenceMode
 					},
 					annotations: {
-						"pl7.app/label": "Mean bin vs parent (" + condition + ")",
+						"pl7.app/label": "Mean Bin vs Parent (" + condition + ")",
 						"pl7.app/format": "+.2f",
 						"pl7.app/isScore": "true",
 						"pl7.app/score/rankingOrder": "decreasing",
@@ -212,10 +212,10 @@ self.body(func(inputs) {
 		// its own synonymous family.
 		if EMIT_BASELINE_COLUMNS && !is_undefined(parentIdAxisSpec) && !is_undefined(entry.binScoreBaselineFile) {
 			for quantity in [
-				{ column: "baselineLevel", id: "binScoreBaselineLevel_", name: "pl7.app/facsBin/binScoreBaselineLevel", type: "Double", fmt: "+.2f", label: "Bin score baseline (", desc: "The middle vs-parent value of this parent's synonymous variants. Should read near zero.", show: "default", order: "70210" },
-				{ column: "baselineP5", id: "binScoreBaselineP5_", name: "pl7.app/facsBin/binScoreBaselineP5", type: "Double", fmt: "+.2f", label: "Bin score baseline p5 (", desc: "The lower edge of the noise band, in gate steps." + ladderNote, show: "optional", order: "70211" },
-				{ column: "baselineP95", id: "binScoreBaselineP95_", name: "pl7.app/facsBin/binScoreBaselineP95", type: "Double", fmt: "+.2f", label: "Bin score baseline p95 (", desc: "The upper edge of the noise band, in gate steps. A variant above it is outside the noise." + ladderNote, show: "optional", order: "70212" },
-				{ column: "baselineVariants", id: "binScoreBaselineVariants_", name: "pl7.app/facsBin/binScoreBaselineVariants", type: "Int", fmt: ",d", label: "Bin score baseline variants (", desc: "How many synonymous variants backed the numbers beside it.", show: "optional", order: "70213" }
+				{ column: "baselineLevel", id: "binScoreBaselineLevel_", name: "pl7.app/facsBin/binScoreBaselineLevel", type: "Double", fmt: "+.2f", label: "Bin Score Baseline (", desc: "The middle vs-parent value of this parent's synonymous variants. Should read near zero.", show: "default", order: "70210" },
+				{ column: "baselineP5", id: "binScoreBaselineP5_", name: "pl7.app/facsBin/binScoreBaselineP5", type: "Double", fmt: "+.2f", label: "Bin Score Baseline P5 (", desc: "The lower edge of the noise band, in gate steps." + ladderNote, show: "optional", order: "70211" },
+				{ column: "baselineP95", id: "binScoreBaselineP95_", name: "pl7.app/facsBin/binScoreBaselineP95", type: "Double", fmt: "+.2f", label: "Bin Score Baseline P95 (", desc: "The upper edge of the noise band, in gate steps. A variant above it is outside the noise." + ladderNote, show: "optional", order: "70212" },
+				{ column: "baselineVariants", id: "binScoreBaselineVariants_", name: "pl7.app/facsBin/binScoreBaselineVariants", type: "Int", fmt: ",d", label: "Bin Score Baseline Variants (", desc: "How many synonymous variants backed the numbers beside it.", show: "optional", order: "70213" }
 			] {
 				collect(scoreEntries, importOne(
 					baselineFiles[entry.binScoreBaselineFile],
@@ -319,7 +319,7 @@ self.body(func(inputs) {
 							"pl7.app/facsBin/referenceMode": enrichmentReference
 						},
 						annotations: {
-							"pl7.app/label": "Enrichment vs baseline " + gate.gate + " (" + condition + ")",
+							"pl7.app/label": "Enrichment vs Baseline " + gate.gate + " (" + condition + ")",
 							"pl7.app/format": ".3~g",
 							"pl7.app/isScore": "true",
 							"pl7.app/score/rankingOrder": "decreasing",
@@ -345,9 +345,9 @@ self.body(func(inputs) {
 				// so they travel beside it rather than only in the manifest.
 				for quantity in [
 					{ column: "baselineLevel", id: "gateBaselineLevel_", name: "pl7.app/facsBin/gateBaselineLevel", type: "Double", fmt: ".3~g", label: "Baseline ", desc: "Where a variant of no effect sits in this gate, measured on this parent's own baseline set. The median, because an enrichment has a long tail.", show: "default", order: "70350" },
-					{ column: "baselineP5", id: "gateBaselineP5_", name: "pl7.app/facsBin/gateBaselineP5", type: "Double", fmt: ".3~g", label: "Baseline p5 ", desc: "The 5th percentile of this parent's baseline set. A threshold rests on this, not on a standard error.", show: "optional", order: "70351" },
-					{ column: "baselineP95", id: "gateBaselineP95_", name: "pl7.app/facsBin/gateBaselineP95", type: "Double", fmt: ".3~g", label: "Baseline p95 ", desc: "The 95th percentile of this parent's baseline set.", show: "optional", order: "70352" },
-					{ column: "baselineVariants", id: "gateBaselineVariants_", name: "pl7.app/facsBin/gateBaselineVariants", type: "Int", fmt: ",d", label: "Baseline variants ", desc: "How many of this parent's baseline variants survived the read floor here and backed the numbers beside it.", show: "optional", order: "70353" }
+					{ column: "baselineP5", id: "gateBaselineP5_", name: "pl7.app/facsBin/gateBaselineP5", type: "Double", fmt: ".3~g", label: "Baseline P5 ", desc: "The 5th percentile of this parent's baseline set. A threshold rests on this, not on a standard error.", show: "optional", order: "70351" },
+					{ column: "baselineP95", id: "gateBaselineP95_", name: "pl7.app/facsBin/gateBaselineP95", type: "Double", fmt: ".3~g", label: "Baseline P95 ", desc: "The 95th percentile of this parent's baseline set.", show: "optional", order: "70352" },
+					{ column: "baselineVariants", id: "gateBaselineVariants_", name: "pl7.app/facsBin/gateBaselineVariants", type: "Int", fmt: ",d", label: "Baseline Variants ", desc: "How many of this parent's baseline variants survived the read floor here and backed the numbers beside it.", show: "optional", order: "70353" }
 				] {
 					collect(scoreEntries, importOne(
 						baselineFiles[gate.baselineGateFile],
@@ -432,7 +432,7 @@ self.body(func(inputs) {
 						"pl7.app/alphabet": "aminoacid"
 					},
 					annotations: {
-						"pl7.app/label": "Mean bin (" + condition + ")",
+						"pl7.app/label": "Mean Bin (" + condition + ")",
 						"pl7.app/format": ".2f",
 						"pl7.app/isScore": "true",
 						"pl7.app/score/rankingOrder": "decreasing",
@@ -465,7 +465,7 @@ self.body(func(inputs) {
 							"pl7.app/facsBin/referenceMode": entry.rolled.referenceMode
 						},
 						annotations: {
-							"pl7.app/label": "Mean bin vs parent (" + condition + ")",
+							"pl7.app/label": "Mean Bin vs Parent (" + condition + ")",
 							"pl7.app/format": "+.2f",
 							"pl7.app/isScore": "true",
 							"pl7.app/score/rankingOrder": "decreasing",
@@ -481,8 +481,8 @@ self.body(func(inputs) {
 
 			if !is_undefined(entry.rolled.gateRankMeanFile) {
 			for quantity in [
-				{ column: "uncertainty", id: "gateRankMeanUncertaintyAa_", name: "pl7.app/facsBin/gateRankMeanUncertainty", type: "Double", fmt: ".3f", label: "Mean bin error (", desc: "The larger of the counting error and the disagreement between this protein's nucleotide variants.", order: "70150" },
-				{ column: "ntVariants", id: "gateRankMeanNtVariantsAa_", name: "pl7.app/facsBin/ntVariants", type: "Int", fmt: ",d", label: "NT variants (", desc: "How many of this protein's nucleotide variants passed the read floor and entered the error estimate.", order: "70160" }
+				{ column: "uncertainty", id: "gateRankMeanUncertaintyAa_", name: "pl7.app/facsBin/gateRankMeanUncertainty", type: "Double", fmt: ".3f", label: "Mean Bin Error (", desc: "The larger of the counting error and the disagreement between this protein's nucleotide variants.", order: "70150" },
+				{ column: "ntVariants", id: "gateRankMeanNtVariantsAa_", name: "pl7.app/facsBin/ntVariants", type: "Int", fmt: ",d", label: "NT Variants (", desc: "How many of this protein's nucleotide variants passed the read floor and entered the error estimate.", order: "70160" }
 			] {
 				collect(scoreEntries, importOne(
 					scoreFiles[entry.rolled.gateRankMeanFile],
@@ -548,8 +548,8 @@ self.body(func(inputs) {
 				// Both ride in the same file as the enrichment, and exist only at this level:
 				// a per-variant enrichment has no nucleotide variants to disagree.
 				for quantity in [
-					{ column: "uncertainty", id: "gateEnrichmentUncertaintyAa_", name: "pl7.app/facsBin/gateEnrichmentUncertainty", type: "Double", fmt: ".3~g", label: "Enrichment error ", desc: "The standard error of the enrichment, in the same units: the larger of the counting error and the disagreement between this protein's nucleotide variants. Below about 20 reads it understates the error; check the read counts.", order: "70310" },
-					{ column: "ntVariants", id: "gateEnrichmentNtVariantsAa_", name: "pl7.app/facsBin/gateEnrichmentNtVariants", type: "Int", fmt: ",d", label: "Enrichment NT variants ", desc: "How many of this protein's nucleotide variants passed the read floor and entered the error estimate.", order: "70320" }
+					{ column: "uncertainty", id: "gateEnrichmentUncertaintyAa_", name: "pl7.app/facsBin/gateEnrichmentUncertainty", type: "Double", fmt: ".3~g", label: "Enrichment Error ", desc: "The standard error of the enrichment, in the same units: the larger of the counting error and the disagreement between this protein's nucleotide variants. Below about 20 reads it understates the error; check the read counts.", order: "70310" },
+					{ column: "ntVariants", id: "gateEnrichmentNtVariantsAa_", name: "pl7.app/facsBin/gateEnrichmentNtVariants", type: "Int", fmt: ",d", label: "Enrichment NT Variants ", desc: "How many of this protein's nucleotide variants passed the read floor and entered the error estimate.", order: "70320" }
 				] {
 					collect(scoreEntries, importOne(
 						scoreFiles[gate.file],
@@ -600,7 +600,7 @@ self.body(func(inputs) {
 					"pl7.app/facsBin/condition": condition
 				},
 				annotations: {
-					"pl7.app/label": "Gate read frequency (" + condition + ")",
+					"pl7.app/label": "Gate Read Frequency (" + condition + ")",
 					"pl7.app/format": ".3~g",
 					"pl7.app/table/visibility": "optional"
 				}
@@ -621,7 +621,7 @@ self.body(func(inputs) {
 					"pl7.app/facsBin/condition": condition
 				},
 				annotations: {
-					"pl7.app/label": "Gate reads (" + condition + ")",
+					"pl7.app/label": "Gate Reads (" + condition + ")",
 					"pl7.app/format": ",d",
 					"pl7.app/table/visibility": "optional"
 				}
