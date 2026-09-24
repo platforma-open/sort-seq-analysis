@@ -1,5 +1,23 @@
 # @platforma-open/milaboratories.sort-seq-analysis.workflow
 
+## 1.1.1
+
+### Patch Changes
+
+- ea684c4: Republish the software package off version 1.1.0
+
+  The binary registry already held `software/.../main/1.1.0.tgz`, uploaded on 13 August from a much
+  older source tree. The 1.1.0 release did not replace it, so the block paired its new workflow with
+  that old Python and every run failed with `unrecognized arguments: --positions --parents`.
+
+  No behaviour changes. This moves every package to 1.1.1, which is free on both registries.
+
+  Column labels are also put in title case, so "Mean bin vs parent" now reads "Mean Bin vs Parent".
+  Only the display labels change; column names, domains and values are untouched.
+
+- Updated dependencies [ea684c4]
+  - @platforma-open/milaboratories.sort-seq-analysis.software@1.1.1
+
 ## 1.1.0
 
 ### Minor Changes
