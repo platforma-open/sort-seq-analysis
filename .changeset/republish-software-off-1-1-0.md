@@ -13,3 +13,6 @@ older source tree. The 1.1.0 release did not replace it, so the block paired its
 that old Python and every run failed with `unrecognized arguments: --positions --parents`.
 
 No behaviour changes. This moves every package to 1.1.1, which is free on both registries.
+
+Column labels are also put in title case, so "Mean bin vs parent" now reads "Mean Bin vs Parent".
+Only the display labels change; column names, domains and values are untouched.

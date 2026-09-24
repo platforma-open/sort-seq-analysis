@@ -16,9 +16,9 @@ A run may have either, or both. With both, the block emits both sets of scores.
 
 When the gates are ordered, every variant gets two values per condition:
 
-- **Mean bin** — the read-weighted mean of the gate ranks the variant's reads fell in, in gate-rank units.
+- **Mean Bin** — the read-weighted mean of the gate ranks the variant's reads fell in, in gate-rank units.
   Higher means the variant sorted into higher gates. Not an affinity and not calibrated.
-- **Mean bin vs parent** — the mean bin minus the parent's. Zero means the variant behaves like the parent at
+- **Mean Bin vs Parent** — the mean bin minus the parent's. Zero means the variant behaves like the parent at
   that condition.
 
 ## An Unsorted Input: Per-Gate Enrichment
