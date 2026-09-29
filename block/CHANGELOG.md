@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.sort-seq-analysis.block
 
+## 1.1.2
+
+### Patch Changes
+
+- 5fd1d4a: Update SDK: PlAgDataTable no longer recreates its grid in an endless loop
+
 ## 1.1.1
 
 ### Patch Changes
