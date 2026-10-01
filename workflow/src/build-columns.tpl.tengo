@@ -56,10 +56,15 @@ self.body(func(inputs) {
 	baselineFiles := inputs.baselineFiles
 	blockId := inputs.blockId
 
-	// Every baseline-derived column is held back for now. The computation still resolves the
-	// baseline and writes its files, and the manifest still reports it — only the columns are
-	// withheld. Flip this to true to emit them again.
-	EMIT_BASELINE_COLUMNS := false
+	// Kill switch for every baseline-derived column. The computation resolves the baseline and
+	// writes its files either way, and the manifest reports it either way — only the columns
+	// are withheld when this is false.
+	//
+	// Held back for one release while nothing had exercised these outputs on real data. Now on,
+	// together with `BASELINE_AVAILABLE` in the model: the two must agree, or the user picks a
+	// baseline that emits nothing, or the columns claim a baseline the user never chose.
+	// Remove the switch once a reference run has confirmed the outputs.
+	EMIT_BASELINE_COLUMNS := true
 
 	// Appended to every description whose units are gate ranks, so a mean bin of 2.6 can be
 	// read without opening the settings. The computation renders the list; a rank is a JSON

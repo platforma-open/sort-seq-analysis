@@ -31,11 +31,11 @@ export * from "./columns";
 export * from "./types";
 
 /**
- * Whether the baseline is offered. Off for this release: the workflow withholds every
- * baseline-derived column (`EMIT_BASELINE_COLUMNS` in `build-columns.tpl.tengo`), so a baseline
- * pick would stale the block and change nothing a user can see. Turn both on together.
+ * Whether the baseline is offered. Pairs with `EMIT_BASELINE_COLUMNS` in
+ * `build-columns.tpl.tengo` — the two must hold the same value. On alone, the user picks a
+ * baseline and no column carries it; off alone, the columns claim a baseline nobody chose.
  */
-export const BASELINE_AVAILABLE = false;
+export const BASELINE_AVAILABLE = true;
 
 /**
  * Every configuration rule, checked here and nowhere else. The one data-value rule (sort

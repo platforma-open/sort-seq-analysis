@@ -119,11 +119,13 @@ function resetGateOrder() {
 const isNucleotide = computed(() => app.model.outputs.datasetIsNucleotide);
 
 /**
- * The synonymous option is withheld on a protein-level dataset, where nothing would be
- * selected — the SDK option type has no per-option `disabled`.
+ * Two options are withheld, each for its own reason: synonymous on a protein-level dataset,
+ * where nothing would be selected, and `sequence` always, which is retired. The SDK option type
+ * has no per-option `disabled`, so withholding is the only lever.
  *
- * Except when it is already the current pick: a dropdown whose value matches no option renders
- * empty and looks broken. It stays listed, and the warning below says why it produces nothing.
+ * Both rules make the same exception, for the same reason: an option that is already the current
+ * pick stays listed, because a dropdown whose value matches no option renders empty and looks
+ * broken. For synonymous the warning below then says why it produces nothing.
  */
 const baselineOptions = computed(() => {
   const options = [
@@ -142,7 +144,11 @@ const baselineOptions = computed(() => {
       value: "sequence" as const,
       description: "One variant you name below.",
     },
-  ];
+    // Withdrawn from the picker. It asks for a variant key typed by hand, which nothing in the
+    // UI shows and which names one variant — so it carries no spread, and a baseline without a
+    // spread cannot say how wide the noise is. The model and the computation still accept it, so
+    // a block that already holds it keeps working and keeps the option listed below.
+  ].filter((option) => option.value !== "sequence" || app.model.data.baseline === "sequence");
   if (isNucleotide.value === false && app.model.data.baseline !== "synonymous") {
     return options.filter((option) => option.value !== "synonymous");
   }
@@ -326,7 +332,8 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
         </PlDropdown>
 
         <!-- Offered whether or not there is an input: both runs benefit, for different reasons.
-             Hidden while the workflow withholds the baseline columns — see `BASELINE_AVAILABLE`. -->
+             `BASELINE_AVAILABLE` is the kill switch the workflow's `EMIT_BASELINE_COLUMNS`
+             pairs with; hiding the control is what keeps the two from disagreeing. -->
         <PlDropdown
           v-if="BASELINE_AVAILABLE"
           v-model="app.model.data.baseline"
