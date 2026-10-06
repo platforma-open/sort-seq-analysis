@@ -1,5 +1,6 @@
 ---
 '@platforma-open/milaboratories.sort-seq-analysis.workflow': minor
+'@platforma-open/milaboratories.sort-seq-analysis.software': minor
 '@platforma-open/milaboratories.sort-seq-analysis.model': minor
 '@platforma-open/milaboratories.sort-seq-analysis.ui': minor
 '@platforma-open/milaboratories.sort-seq-analysis.block': minor
