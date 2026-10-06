@@ -16,7 +16,6 @@ from conftest import (
     BASE_ROWS,
     INPUT_GATE,
     SYNONYMOUS_BASELINE_LEVEL,
-    SYNONYMOUS_BASELINE_SPREAD,
     SYNONYMOUS_ENRICHMENTS,
     SYNONYMOUS_GATE_RANKS,
     SYNONYMOUS_GATE_ROWS,
@@ -573,7 +572,6 @@ def test_enrichment_run_emits_one_file_per_gate_with_its_baseline(tmp_path):
     assert gate["variantsEnriched"] == 7
 
     assert gate["baseline"]["level"] == pytest.approx(SYNONYMOUS_BASELINE_LEVEL, rel=REL)
-    assert gate["baseline"]["spread"] == pytest.approx(SYNONYMOUS_BASELINE_SPREAD, rel=REL)
     assert gate["baseline"]["variants"] == 5
 
     values = read_scores(out_dir, gate["file"], "gateEnrichment")
@@ -786,9 +784,12 @@ def test_no_parent_link_writes_no_summary(tmp_path):
     assert manifest["parentSummaryFile"] is None
 
 
-def test_enrichment_carries_a_vs_baseline_column(tmp_path):
-    """The enrichment against its own parent's baseline, so 1.0 means no effect on every gate.
-    W4 enriches at 1.5, which is exactly the synonymous level, so it must read 1.0."""
+def test_enrichment_is_never_divided_by_the_baseline(tmp_path):
+    """The enrichment is reported raw, and the baseline beside it in the manifest.
+
+    Dividing one by the other would mix grains: the baseline is measured per nucleotide variant,
+    the rolled-up enrichment is pooled per protein.
+    """
     code, out_dir, manifest = invoke(
         tmp_path,
         reads_frame(SYNONYMOUS_ROWS),
@@ -801,40 +802,18 @@ def test_enrichment_carries_a_vs_baseline_column(tmp_path):
     assert code == 0
     gate = manifest["conditions"][0]["gateEnrichments"][0]
     frame = pl.read_csv(out_dir / gate["file"], separator="\t", schema_overrides={"variantKey": pl.String})
-    assert "gateEnrichmentVsBaseline" in frame.columns
+    assert "gateEnrichmentVsBaseline" not in frame.columns
+    assert "gateEnrichment" in frame.columns
 
-    vs = dict(zip(frame["variantKey"].to_list(), frame["gateEnrichmentVsBaseline"].to_list()))
-    raw = dict(zip(frame["variantKey"].to_list(), frame["gateEnrichment"].to_list()))
+    # W4 sits exactly on the level, so comparing the two reads it as a variant of no effect.
     level = gate["baseline"]["level"]
-    assert vs["W4"] == pytest.approx(raw["W4"] / level, rel=REL)
-    # W4's enrichment is the median of the set, so it sits exactly on no change.
-    assert vs["W4"] == pytest.approx(1.0, rel=REL)
+    raw = dict(zip(frame["variantKey"].to_list(), frame["gateEnrichment"].to_list()))
+    assert raw["W4"] == pytest.approx(level, rel=REL)
 
 
-def test_gate_ranking_emits_a_bin_score_baseline(tmp_path):
-    """The noise band on `binScore`, which gate-ranking mode had no way to report."""
-    code, out_dir, manifest = invoke(
-        tmp_path,
-        reads_frame(SYNONYMOUS_GATE_ROWS),
-        variants_frame(SYNONYMOUS_MUTATION_COUNTS, sequences=SYNONYMOUS_SEQUENCES),
-        gate_ranks=SYNONYMOUS_GATE_RANKS,
-        baseline=BASELINE_SYNONYMOUS,
-    )
-
-    assert code == 0
-    entry = manifest["conditions"][0]
-    assert manifest["mode"] == "gate-ranking"
-    assert entry["binScoreBaselineFile"] is not None
-
-    frame = pl.read_csv(out_dir / entry["binScoreBaselineFile"], separator="\t")
-    assert frame.columns[:2] == ["parentId", "baselineLevel"]
-    assert "baselineP5" in frame.columns and "baselineP95" in frame.columns
-    assert frame["baselineVariants"].to_list() == [5]
-
-
-def test_both_quantities_get_their_own_band(tmp_path):
-    """An ordered run with an input produces two scores, so the baseline reports a band for
-    each: one on the enrichment scale, per gate, and one on the rank scale, per condition."""
+def test_an_ordered_run_with_an_input_still_reports_the_baseline(tmp_path):
+    """Ordering the gates adds the rank metrics and takes nothing away: the per-gate baseline
+    is reported exactly as it is on an unordered run."""
     _, _, manifest = invoke(
         tmp_path,
         reads_frame(SYNONYMOUS_ROWS),
@@ -844,7 +823,6 @@ def test_both_quantities_get_their_own_band(tmp_path):
         baseline=BASELINE_SYNONYMOUS,
     )
     entry = manifest["conditions"][0]
-    assert entry["binScoreBaselineFile"] is not None
     assert entry["gateEnrichments"][0]["baselineGateFile"] is not None
 
 
@@ -901,9 +879,9 @@ def test_gate_ranking_emits_a_bin_score_at_protein_grain(tmp_path):
     assert "pM" in scores
 
 
-def test_the_protein_level_carries_no_baseline_band(tmp_path):
+def test_the_protein_level_carries_no_per_position_baseline(tmp_path):
     """The synonymous variants are pooled into the parent protein, so there is no set left to
-    measure noise from at this grain. The band stays on the nucleotide table."""
+    measure at this grain. The per-position split stays on the nucleotide table."""
     code, _, manifest = invoke(
         tmp_path,
         reads_frame(SYNONYMOUS_GATE_ROWS),
@@ -913,10 +891,9 @@ def test_the_protein_level_carries_no_baseline_band(tmp_path):
     )
 
     assert code == 0
-    # The nucleotide level has the band...
-    assert manifest["conditions"][0]["binScoreBaselineFile"] is not None
-    # ...and there is no protein-grain band anywhere in the entry.
-    assert "binScoreBaselineFile" not in (manifest["conditions"][0]["rolled"] or {})
+    rolled = manifest["conditions"][0].get("rolled") or {}
+    for gate in rolled.get("gateEnrichments", []):
+        assert gate["baselinePositionFile"] is None
 
 
 def test_sort_yield_correction_survives_the_protein_roll_up(tmp_path):

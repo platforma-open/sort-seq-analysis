@@ -132,16 +132,11 @@ export type PooledGroup = {
   sortFractionsDiffer?: boolean;
 };
 
-/**
- * A baseline as measured at one gate. `spread` is percentiles and deliberately carries no
- * standard error: an SE shrinks as √n and describes the mean, where a threshold needs the
- * scatter of the variants themselves.
- */
+/** A baseline as measured at one gate. */
 export type BaselineSummary = {
   /** The median: a ratio has a long tail, so a mean would sit where no cell does. */
   level: number;
-  spread: { p5: number; p25: number; p75: number; p95: number };
-  /** How many baseline variants survived the floor at this gate and backed the numbers above. */
+  /** How many baseline variants survived the floor at this gate and backed the level above. */
   variants: number;
 };
 
@@ -152,8 +147,6 @@ export type GateEnrichment = {
   /** The gate's declared rank, which is also the suffix in the file name. */
   rank: number;
   file: string;
-  /** Whether the file carries the vs-baseline column. It needs a resolved, non-zero level. */
-  hasVsBaseline: boolean;
   variantsEnriched: number;
   /** Null where no baseline was resolved, or where none of its variants survived the floor here. */
   baseline: BaselineSummary | null;
@@ -244,11 +237,6 @@ export type ConditionSummary = {
   gateRankMeanFile: string | null;
   /** Null where the column is not produced at this condition. */
   binScoreFile: string | null;
-  /**
-   * The noise band on `binScore`, one row per parent. Gate-ranking mode only — the score is
-   * per condition there, so its baseline is one number rather than one per gate.
-   */
-  binScoreBaselineFile: string | null;
   readDistributionFile: string;
   /** Null where `binScore` is not produced. */
   referenceMode: "referenced" | "cancelled" | null;

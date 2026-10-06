@@ -1,7 +1,7 @@
 """Choosing the baseline set, and summarising it per gate. Expected numbers come from `conftest`.
 
-Two silent failures the tests exist for: the parent sequence left inside the synonymous set
-(W1 at 0.125 against a median of 1.5), and the spread reported as a standard error.
+The silent failure these tests exist for: the parent sequence left inside the synonymous set
+(W1 at 0.125 against a median of 1.5).
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from conftest import (
     INPUT_GATE,
     INPUT_ROWS,
     SYNONYMOUS_BASELINE_LEVEL,
-    SYNONYMOUS_BASELINE_SPREAD,
     SYNONYMOUS_ENRICHMENTS,
     SYNONYMOUS_GATE_RANKS,
     SYNONYMOUS_MUTATION_COUNTS,
@@ -233,18 +232,13 @@ def test_level_is_the_median_of_the_synonymous_values():
     assert summary["g1"]["level"] == pytest.approx(SYNONYMOUS_BASELINE_LEVEL, rel=REL)
 
 
-def test_spread_is_percentiles_and_carries_no_standard_error():
-    """The four percentiles, hand-computed with linear interpolation over five values.
-
-    The second assertion is the point: no mean and no SE are emitted, not even alongside."""
+def test_a_gate_summary_is_a_level_and_a_count():
+    """Two fields and no third: a number that is present is a number that will be used."""
     summary = scoring.baseline_summary(
         synonymous_enrichments(), resolve(BASELINE_SYNONYMOUS), SYNONYMOUS_GATE_RANKS
     )
-    entry = summary["g1"]
 
-    assert entry["spread"] == pytest.approx(SYNONYMOUS_BASELINE_SPREAD, rel=REL)
-    assert set(entry) == {"level", "spread", "variants"}
-    assert set(entry["spread"]) == {"p5", "p25", "p75", "p95"}
+    assert set(summary["g1"]) == {"level", "variants"}
 
 
 def test_the_count_says_how_many_variants_back_the_number():
@@ -267,9 +261,9 @@ def test_including_the_parent_dna_would_move_the_level():
     assert summary["g1"]["level"] != pytest.approx(SYNONYMOUS_BASELINE_LEVEL, rel=REL)
 
 
-def test_a_single_variant_baseline_has_a_degenerate_spread():
-    """Wild type and a named sequence are one variant each, so every percentile is that
-    variant's own value. Honest rather than suppressed — the count says why."""
+def test_a_single_variant_baseline_is_that_variant():
+    """Wild type and a named sequence are one variant each, so the level is simply its own
+    value and the count says so. Neither is offered in the UI; both still compute."""
     summary = scoring.baseline_summary(
         synonymous_enrichments(), resolve(BASELINE_WILD_TYPE), SYNONYMOUS_GATE_RANKS
     )
@@ -277,10 +271,6 @@ def test_a_single_variant_baseline_has_a_degenerate_spread():
 
     assert entry["variants"] == 1
     assert entry["level"] == pytest.approx(SYNONYMOUS_ENRICHMENTS["W1"], rel=REL)
-    assert all(
-        value == pytest.approx(SYNONYMOUS_ENRICHMENTS["W1"], rel=REL)
-        for value in entry["spread"].values()
-    )
 
 
 def test_no_baseline_summarises_to_nothing():
@@ -403,19 +393,11 @@ def test_only_the_synonymous_option_is_split_by_position():
 
 
 def test_the_split_carries_the_same_shape_as_the_per_gate_summary():
-    """Level, the four percentiles and a count — one shape for a consumer to learn."""
+    """Level and a count — one shape for a consumer to learn."""
     variants, reads = nnk_library("CTGCTGTGG")
     _, _, positions = positions_for(variants, reads)
 
-    assert positions["g1"].columns == [
-        "position",
-        "baselineLevel",
-        "baselineP5",
-        "baselineP25",
-        "baselineP75",
-        "baselineP95",
-        "baselineVariants",
-    ]
+    assert positions["g1"].columns == ["position", "baselineLevel", "baselineVariants"]
 
 
 # ---------------------------------------------------------------------------
@@ -423,52 +405,7 @@ def test_the_split_carries_the_same_shape_as_the_per_gate_summary():
 # ---------------------------------------------------------------------------
 
 
-def test_enrichment_vs_baseline_divides_rather_than_subtracts():
-    """The synonymous set is W2..W6 with enrichments 0.5, 1.0, 1.5, 2.0, 2.5, so the level is
-    the median 1.5.
-
-    M1 enriches at 2.0. Against the baseline that is 2.0 / 1.5 = 4/3 — a third above no change.
-    Subtracting would give 0.5, which is not comparable to any other gate's 0.5.
-    """
-    level = 1.5
-    assert 2.0 / level == pytest.approx(4 / 3, rel=REL)
-    # W4 sits exactly on the level, so it reads as 1.0 — a variant of no effect.
-    assert 1.5 / level == pytest.approx(1.0, rel=REL)
-
-
-def test_the_bin_score_baseline_is_one_number_per_condition():
-    """`binScore` is per variant, not per gate, so its baseline is one level and one band for
-    the whole condition — unlike the enrichment baseline, which is one per gate."""
-    values = pl.DataFrame(
-        {COL_VARIANT: ["W2", "W3", "W4", "W5", "W6"], OUT_BIN_SCORE: [-0.2, -0.1, 0.0, 0.1, 0.3]}
-    )
-    baseline = scoring.Baseline(BASELINE_SYNONYMOUS, ("W2", "W3", "W4", "W5", "W6"), None)
-
-    summary = scoring.value_baseline(values, OUT_BIN_SCORE, baseline)
-
-    assert summary["variants"] == 5
-    assert summary["level"] == pytest.approx(0.0, abs=1e-12)
-    # Linear interpolation over five values: p5 sits at index 0.2, p95 at index 3.8.
-    assert summary["spread"]["p5"] == pytest.approx(-0.2 + 0.2 * 0.1, rel=REL)
-    assert summary["spread"]["p95"] == pytest.approx(0.1 + 0.8 * 0.2, rel=REL)
-
-
-def test_the_bin_score_baseline_level_flags_an_atypical_parent():
-    """The level should read near zero, because binScore already subtracts the parent. A level
-    far from zero says the parent sequence is not typical of its own synonymous family, and
-    every vs-parent value on the run is shifted by that much."""
-    shifted = pl.DataFrame(
-        {COL_VARIANT: ["W2", "W3", "W4"], OUT_BIN_SCORE: [0.38, 0.40, 0.44]}
-    )
-    baseline = scoring.Baseline(BASELINE_SYNONYMOUS, ("W2", "W3", "W4"), None)
-
-    summary = scoring.value_baseline(shifted, OUT_BIN_SCORE, baseline)
-
-    assert summary["level"] == pytest.approx(0.40, rel=REL)
-    assert abs(summary["level"]) > 0.2
-
-
 def test_no_baseline_means_no_summary():
     """Absent, not a zero: a level of 0 would be a measured baseline sitting at no change."""
-    values = pl.DataFrame({COL_VARIANT: ["W2"], OUT_BIN_SCORE: [0.1]})
-    assert scoring.value_baseline(values, OUT_BIN_SCORE, scoring.Baseline(None, (), None)) is None
+    nothing = scoring.Baseline(None, (), None)
+    assert scoring.baseline_summary(synonymous_enrichments(), nothing, SYNONYMOUS_GATE_RANKS) == {}

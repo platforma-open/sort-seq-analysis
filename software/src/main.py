@@ -154,10 +154,8 @@ def _report_enrichment(entry: dict) -> None:
         if baseline is None:
             line += "; no baseline"
         else:
-            spread = baseline["spread"]
             line += (
                 f"; baseline {baseline['level']:.4g}"
-                f" [p5 {spread['p5']:.4g}, p95 {spread['p95']:.4g}]"
                 f" from {baseline['variants']} variant(s)"
             )
         print(line)

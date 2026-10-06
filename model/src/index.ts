@@ -106,19 +106,8 @@ export function settingsIssues(data: BlockData): string[] {
     }
   }
 
-  // The other two baseline options name their variants from the data. Only checked in
-  // enrichment mode, where `sequence` is the only mode that projects it.
-  if (
-    BASELINE_AVAILABLE &&
-    data.inputGate !== undefined &&
-    data.baseline === "sequence" &&
-    !data.baselineSequence
-  ) {
-    issues.push("Enter the nucleotide sequence's variant key to use as the baseline");
-  }
-
-  // The synonymous baseline's grain requirement is NOT checked here: the args lambda cannot
-  // read a spec, and the run degrades loudly anyway. The drawer disables the option instead.
+  // The baseline's grain requirement is NOT checked here: the args lambda cannot read a spec,
+  // and the run degrades loudly anyway. The drawer shows a warning instead.
 
   return issues;
 }
@@ -230,7 +219,6 @@ function buildScoresTable(ctx: BlockRenderCtx<BlockArgs, BlockData>, alphabet: s
         { match: { name: exact(FacsBin.GateRankMean) }, visibility: "default" },
         { match: { name: exact(FacsBin.BinScore) }, visibility: "default" },
         { match: { name: exact(FacsBin.GateEnrichment) }, visibility: "default" },
-        { match: { name: exact(FacsBin.GateEnrichmentVsBaseline) }, visibility: "default" },
         { match: { name: exact(PColumnName.VariantLabel) }, visibility: "default" },
         { match: { name: exact(PColumnName.Mutations) }, visibility: "default" },
         { match: { name: ".*" }, visibility: "optional" },
@@ -246,8 +234,8 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
     if (issues.length > 0) throw new Error(issues.join("; "));
 
     // Two facts, not a mode. An enrichment needs a reference, so naming one is what asks for
-    // it; ranks need an order, so the toggle is what asks for those.
-    const enrichment = data.inputGate !== undefined;
+    // it; ranks need an order, so the toggle is what asks for those. `inputGate` carries the
+    // first straight through, so only the second needs a local.
     const ordered = data.gatesOrdered !== false;
 
     return {
@@ -271,16 +259,12 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
       inputGate: data.inputGate,
       // Projected only when false, so an ordered run's bytes are unchanged.
       gatesOrdered: ordered ? undefined : false,
-      // Offered in both modes. Gate-ranking takes only the synonymous option: the other two
-      // name a single variant, which just repeats the reference `binScore` already subtracts.
-      // A gate-ranking block made before this projected nothing here, and still does unless
-      // the user picks synonymous, so no instance goes stale.
-      baseline:
-        BASELINE_AVAILABLE && (enrichment || data.baseline === "synonymous")
-          ? data.baseline
-          : undefined,
+      // Every baseline output sits beside a per-gate enrichment, so without an input there is
+      // nothing for it to reach and the field is dropped. `BaselineOption` still admits two
+      // values the drawer does not offer, so they pass through for a block already holding one.
+      baseline: BASELINE_AVAILABLE && data.inputGate !== undefined ? data.baseline : undefined,
       baselineSequence:
-        BASELINE_AVAILABLE && enrichment && data.baseline === "sequence"
+        BASELINE_AVAILABLE && data.inputGate !== undefined && data.baseline === "sequence"
           ? data.baselineSequence
           : undefined,
     };

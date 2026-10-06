@@ -22,7 +22,6 @@ import {
   PlMaskIcon24,
   PlNumberField,
   PlSlideModal,
-  PlTextField,
   PlTooltip,
   useWatchFetch,
 } from "@platforma-sdk/ui-vue";
@@ -73,12 +72,6 @@ const conditionValueOptions = computed(() =>
 
 const gateValues = computed(() => app.model.data.gateValues);
 
-/**
- * The run is read off two facts, not chosen. An enrichment needs a reference, so naming one
- * turns it on; ranks need an order, so the toggle below turns those on.
- */
-const isEnrichment = computed(() => app.model.data.inputGate !== undefined);
-
 /** `undefined` means ordered, which is the ordinary case and every block made before this. */
 const gatesOrdered = computed({
   get: () => app.model.data.gatesOrdered !== false,
@@ -119,56 +112,32 @@ function resetGateOrder() {
 const isNucleotide = computed(() => app.model.outputs.datasetIsNucleotide);
 
 /**
- * Two options are withheld, each for its own reason: synonymous on a protein-level dataset,
- * where nothing would be selected, and `sequence` always, which is retired. The SDK option type
- * has no per-option `disabled`, so withholding is the only lever.
- *
- * Both rules make the same exception, for the same reason: an option that is already the current
- * pick stays listed, because a dropdown whose value matches no option renders empty and looks
- * broken. For synonymous the warning below then says why it produces nothing.
+ * The baseline is the parent's synonymous variants, and nothing else. One variant cannot scatter,
+ * so a single-sequence baseline has a zero-width band that reads as "no variant is within the
+ * noise"; and the per-position split, which is what the Mutation Explorer draws, exists only for
+ * this set. `BaselineOption` still carries the other two so an existing block keeps running.
  */
-const baselineOptions = computed(() => {
-  const options = [
-    {
-      label: "Wild-type sequence",
-      value: "wild-type" as const,
-      description: "The parent row. One variant, so no spread.",
-    },
-    {
-      label: "Synonymous variants",
-      value: "synonymous" as const,
-      description: "Same protein, different nucleotides. Needs a nucleotide-level dataset.",
-    },
-    {
-      label: "A specific nucleotide sequence",
-      value: "sequence" as const,
-      description: "One variant you name below.",
-    },
-    // Withdrawn from the picker. It asks for a variant key typed by hand, which nothing in the
-    // UI shows and which names one variant — so it carries no spread, and a baseline without a
-    // spread cannot say how wide the noise is. The model and the computation still accept it, so
-    // a block that already holds it keeps working and keeps the option listed below.
-  ].filter((option) => option.value !== "sequence" || app.model.data.baseline === "sequence");
-  if (isNucleotide.value === false && app.model.data.baseline !== "synonymous") {
-    return options.filter((option) => option.value !== "synonymous");
-  }
-  // Gate ranking takes only the synonymous option. The other two name a single variant, which
-  // repeats the reference "Mean bin vs parent" already subtracts and adds no spread. The
-  // current pick stays listed either way, or the dropdown renders empty and looks broken.
-  if (!isEnrichment.value) {
-    return options.filter(
-      (option) => option.value === "synonymous" || option.value === app.model.data.baseline,
-    );
-  }
-  return options;
+const synonymousBaseline = computed({
+  get: () => app.model.data.baseline === "synonymous",
+  set: (value) => {
+    app.model.data.baseline = value ? "synonymous" : undefined;
+    app.model.data.baselineSequence = undefined;
+  },
 });
 
 /**
- * Shown rather than corrected: clearing `data.baseline` from a watcher on an output is the
- * hairpin. The run is not broken either — it produces no baseline and the manifest says why.
+ * Offered only where the baseline can both be measured and reach a column: the nucleotide grain
+ * gives it a set to measure, and an input gate gives it an enrichment to sit beside. Without the
+ * input every baseline output is empty, so the control would be a no-op.
+ *
+ * `undefined` grain is not-yet-known, so the control stays until it settles rather than flickering
+ * away and back.
+ *
+ * Hiding is the whole correction here: clearing `data.baseline` from a watcher on an output would
+ * be the hairpin. The args projection drops it instead, so a stale value reaches no run.
  */
-const synonymousUnavailable = computed(
-  () => app.model.data.baseline === "synonymous" && isNucleotide.value === false,
+const baselineAvailableHere = computed(
+  () => isNucleotide.value !== false && app.model.data.inputGate !== undefined,
 );
 
 function setAbundance(ref: typeof app.model.data.abundanceRef) {
@@ -182,9 +151,12 @@ function setAbundance(ref: typeof app.model.data.abundanceRef) {
   app.model.data.gateColumnLabel = undefined;
   app.model.data.gateOrder = [];
   app.model.data.excludedConditions = [];
-  // The input is a gate-column value, so it dies with the column. The mode and baseline are
-  // what the user is measuring and survive a change of dataset.
+  // The input is a gate-column value, so it dies with the column.
   app.model.data.inputGate = undefined;
+  // The baseline needs the nucleotide grain, which is a property of the dataset — so a new one
+  // cannot inherit the old one's answer.
+  app.model.data.baseline = undefined;
+  app.model.data.baselineSequence = undefined;
 }
 
 function setConditionColumn(ref: SUniversalPColumnId | undefined) {
@@ -331,41 +303,15 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
           </template>
         </PlDropdown>
 
-        <!-- Offered whether or not there is an input: both runs benefit, for different reasons.
-             `BASELINE_AVAILABLE` is the kill switch the workflow's `EMIT_BASELINE_COLUMNS`
-             pairs with; hiding the control is what keeps the two from disagreeing. -->
-        <PlDropdown
-          v-if="BASELINE_AVAILABLE"
-          v-model="app.model.data.baseline"
-          :options="baselineOptions"
-          label="Baseline"
-          clearable
-        >
-          <template #tooltip>
-            A set of variants known to have no effect. With an input it sets where "no change" sits,
-            which is not 1.0. Without one it shows how wide the noise is. Only the synonymous option
-            has a spread, being measured over many variants rather than one.
-          </template>
-        </PlDropdown>
-
-        <PlTextField
-          v-if="BASELINE_AVAILABLE && isEnrichment && app.model.data.baseline === 'sequence'"
-          v-model="app.model.data.baselineSequence"
-          label="Baseline variant key"
-          clearable
-        >
-          <template #tooltip> The key of the one nucleotide sequence to measure against. </template>
-        </PlTextField>
-
-        <PlAlert
-          v-if="BASELINE_AVAILABLE && synonymousUnavailable"
-          type="warn"
-          label="Synonymous baseline unavailable"
-        >
-          This dataset is protein-level, where synonymous variants have already been merged into the
-          wild type. The run will succeed and report no baseline. Pick a nucleotide-level dataset,
-          or choose another baseline.
-        </PlAlert>
+        <PlCheckbox v-if="BASELINE_AVAILABLE && baselineAvailableHere" v-model="synonymousBaseline">
+          Per-position baseline
+          <PlTooltip class="info" position="top">
+            <template #tooltip>
+              Measured from the parent's synonymous variants — same protein, different DNA — at each
+              position. Gives the mutation map a reference value for the parent residue.
+            </template>
+          </PlTooltip>
+        </PlCheckbox>
       </PlAccordionSection>
     </PlAccordion>
 
