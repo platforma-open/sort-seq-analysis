@@ -132,16 +132,11 @@ export type PooledGroup = {
   sortFractionsDiffer?: boolean;
 };
 
-/**
- * A baseline as measured at one gate. `spread` is percentiles and deliberately carries no
- * standard error: an SE shrinks as √n and describes the mean, where a threshold needs the
- * scatter of the variants themselves.
- */
+/** A baseline as measured at one gate. */
 export type BaselineSummary = {
   /** The median: a ratio has a long tail, so a mean would sit where no cell does. */
   level: number;
-  spread: { p5: number; p25: number; p75: number; p95: number };
-  /** How many baseline variants survived the floor at this gate and backed the numbers above. */
+  /** How many baseline variants survived the floor at this gate and backed the level above. */
   variants: number;
 };
 
@@ -152,8 +147,6 @@ export type GateEnrichment = {
   /** The gate's declared rank, which is also the suffix in the file name. */
   rank: number;
   file: string;
-  /** Whether the file carries the vs-baseline column. It needs a resolved, non-zero level. */
-  hasVsBaseline: boolean;
   variantsEnriched: number;
   /** Null where no baseline was resolved, or where none of its variants survived the floor here. */
   baseline: BaselineSummary | null;
@@ -221,10 +214,6 @@ export type ParentSummary = {
 /**
  * The protein level, where the run could reach it. Emitted beside the measured level rather
  * than instead of it.
- *
- * It carries no baseline band: the synonymous variants are pooled into the parent protein, so
- * at this grain there is no set left to measure noise from. The band stays on the nucleotide
- * level, where it was measured.
  */
 export type RolledSummary = {
   /** Null where the gates carry no order, and no rank metric is produced. */
@@ -244,11 +233,6 @@ export type ConditionSummary = {
   gateRankMeanFile: string | null;
   /** Null where the column is not produced at this condition. */
   binScoreFile: string | null;
-  /**
-   * The noise band on `binScore`, one row per parent. Gate-ranking mode only — the score is
-   * per condition there, so its baseline is one number rather than one per gate.
-   */
-  binScoreBaselineFile: string | null;
   readDistributionFile: string;
   /** Null where `binScore` is not produced. */
   referenceMode: "referenced" | "cancelled" | null;

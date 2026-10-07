@@ -13,7 +13,6 @@ from pathlib import Path
 import polars as pl
 
 from constants import (
-    BASELINE_BIN_SCORE_FILE_PATTERN,
     BASELINE_FILE_PATTERN,
     BASELINE_GATE_FILE_PATTERN,
     COL_CONDITION,
@@ -169,11 +168,6 @@ def baseline_file_name(index: int, rank: int) -> str:
 def baseline_gate_file_name(index: int, rank: int) -> str:
     """The per-gate baseline for one (condition, gate), one row per parent, keyed [parentId]."""
     return BASELINE_GATE_FILE_PATTERN.format(index=index, rank=rank)
-
-
-def baseline_bin_score_file_name(index: int) -> str:
-    """The baseline of `binScore` for one condition, one row per parent."""
-    return BASELINE_BIN_SCORE_FILE_PATTERN.format(index=index)
 
 
 def distribution_file_name(index: int) -> str:

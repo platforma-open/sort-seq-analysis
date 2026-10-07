@@ -29,7 +29,6 @@ from constants import (
     BASELINE_ABSENT_NO_SYNONYMOUS,
     BASELINE_ABSENT_PARENT_UNIDENTIFIED,
     BASELINE_ABSENT_SEQUENCE_UNKNOWN,
-    BASELINE_PERCENTILES,
     BASELINE_SEQUENCE,
     BASELINE_SYNONYMOUS,
     BASELINE_WILD_TYPE,
@@ -430,11 +429,7 @@ def baseline_summary(
     baseline: Baseline,
     gate_ranks: dict[str, int],
 ) -> dict[str, dict]:
-    """Per gate: the baseline level, its spread, and how many variants back them.
-
-    Percentiles, never a standard error. An SE shrinks as √n and describes the mean; a
-    threshold needs how widely the variants themselves scatter, which does not shrink. No
-    mean and no SE are emitted at all, because a number that is present will be used.
+    """Per gate: the baseline level, and how many variants back it.
 
     The level is the median: an enrichment is a ratio with a long tail.
 
@@ -447,56 +442,18 @@ def baseline_summary(
     if rows.height == 0:
         return {}
 
-    aggregations = [
+    summary = rows.group_by(COL_GATE).agg(
         pl.col(OUT_GATE_ENRICHMENT).median().alias("level"),
         pl.col(OUT_GATE_ENRICHMENT).len().alias("variants"),
-    ]
-    aggregations += [
-        # Linear interpolation: on a small set, the value a reader computing it by hand expects.
-        pl.col(OUT_GATE_ENRICHMENT).quantile(percentile / 100, interpolation="linear").alias(f"p{percentile}")
-        for percentile in BASELINE_PERCENTILES
-    ]
-
-    summary = rows.group_by(COL_GATE).agg(aggregations)
+    )
 
     return {
         row[COL_GATE]: {
             "level": row["level"],
-            "spread": {f"p{percentile}": row[f"p{percentile}"] for percentile in BASELINE_PERCENTILES},
             "variants": row["variants"],
         }
         for row in sorted(summary.iter_rows(named=True), key=lambda row: gate_ranks[row[COL_GATE]])
     }
-
-
-def value_baseline(values: pl.DataFrame, value_column: str, baseline: Baseline) -> dict | None:
-    """Level and spread of one **per-variant** value over the baseline set.
-
-    The sibling of `baseline_summary`, for a quantity that is already summed across gates.
-    `gateRankMean` and `binScore` are per variant, so their baseline is one number per
-    condition rather than one per gate.
-
-    None where the baseline resolved nothing, or where none of its variants survived here.
-    """
-    if not baseline.identified:
-        return None
-    rows = values.filter(pl.col(COL_VARIANT).is_in(list(baseline.variant_keys)))
-    if rows.height == 0:
-        return None
-    column = rows[value_column]
-    return {
-        "level": column.median(),
-        "spread": {
-            f"p{percentile}": column.quantile(percentile / 100, interpolation="linear")
-            for percentile in BASELINE_PERCENTILES
-        },
-        "variants": rows.height,
-    }
-
-
-def percentile_column(percentile: int) -> str:
-    """The header a percentile takes in the per-position baseline file."""
-    return f"baselineP{percentile}"
 
 
 def baseline_by_position(
@@ -507,8 +464,8 @@ def baseline_by_position(
 ) -> dict[str, pl.DataFrame]:
     """The baseline split by the codon position each variant changed.
 
-    Returns gate -> `[position, level, spread…, variants]`. Synonymous option only: the other
-    two are single variants, so a split is one number repeated.
+    Returns gate -> `[position, level, variants]`. Synonymous option only: the other two are
+    single variants, so a split is one number repeated.
 
     Positions with nothing to report are absent rather than null — a blank cell reads as "no
     silent variant is possible here", which a row of nulls would not.
@@ -538,24 +495,11 @@ def baseline_by_position(
     if rows.height == 0:
         return {}
 
-    aggregations = [
+    summary = rows.group_by(COL_GATE, OUT_POSITION).agg(
         pl.col(OUT_GATE_ENRICHMENT).median().alias(OUT_BASELINE_LEVEL),
         pl.col(OUT_GATE_ENRICHMENT).len().alias(OUT_BASELINE_VARIANTS),
-    ]
-    aggregations += [
-        pl.col(OUT_GATE_ENRICHMENT)
-        .quantile(percentile / 100, interpolation="linear")
-        .alias(percentile_column(percentile))
-        for percentile in BASELINE_PERCENTILES
-    ]
-
-    summary = rows.group_by(COL_GATE, OUT_POSITION).agg(aggregations)
-    columns = [
-        OUT_POSITION,
-        OUT_BASELINE_LEVEL,
-        *(percentile_column(percentile) for percentile in BASELINE_PERCENTILES),
-        OUT_BASELINE_VARIANTS,
-    ]
+    )
+    columns = [OUT_POSITION, OUT_BASELINE_LEVEL, OUT_BASELINE_VARIANTS]
 
     return {
         gate: summary.filter(pl.col(COL_GATE) == gate).select(columns).sort(OUT_POSITION)

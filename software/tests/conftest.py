@@ -246,14 +246,8 @@ SYNONYMOUS_ENRICHMENTS = {
     "M1": 2.0,
 }
 
-# The five synonymous values, sorted: [0.5, 1.0, 1.5, 2.0, 2.5].
-#
-# Linear interpolation over n = 5 puts a quantile q at index 4q, so p25, p50 and p75 land
-# exactly on the second, third and fourth members. p5 is at index 0.2 and p95 at index 3.8:
-#   p5  = 0.5 + 0.2 * (1.0 - 0.5) = 0.6
-#   p95 = 2.0 + 0.8 * (2.5 - 2.0) = 2.4
+# The five synonymous values, sorted: [0.5, 1.0, 1.5, 2.0, 2.5], so the median is the third.
 SYNONYMOUS_BASELINE_LEVEL = 1.5
-SYNONYMOUS_BASELINE_SPREAD = {"p5": 0.6, "p25": 1.0, "p75": 2.0, "p95": 2.4}
 
 
 def means_as_dict(frame) -> dict[str, float]:

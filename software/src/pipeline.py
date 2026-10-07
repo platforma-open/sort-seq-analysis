@@ -20,7 +20,6 @@ import codons
 import rollup
 import scoring
 from constants import (
-    BASELINE_PERCENTILES,
     COL_CONDITION,
     COL_GATE,
     COL_PARENT_ID,
@@ -34,7 +33,6 @@ from constants import (
     OUT_BASELINE_LEVEL,
     OUT_BASELINE_VARIANTS,
     OUT_BIN_SCORE,
-    OUT_ENRICHMENT_VS_BASELINE,
     OUT_GATE_ENRICHMENT,
     OUT_GATE_RANK_MEAN,
     OUT_GATE_READS,
@@ -49,7 +47,6 @@ from constants import (
 )
 from errors import Refusal
 from io_layer import (
-    baseline_bin_score_file_name,
     baseline_file_name,
     baseline_gate_file_name,
     distribution_file_name,
@@ -282,7 +279,7 @@ def _parent_scopes(
             parent=parent,
             codon_facts=facts,
             baseline=baseline,
-            # This parent's rows only, so a table listing several no longer refuses outright.
+            # This parent's rows only, so a table listing several still aligns each of them.
             alignment=_align_positions(facts, _positions_for(positions, parent_id)),
         )
     return scopes
@@ -511,7 +508,6 @@ def _score_one_condition(
             "variantsScored": scored_rolled.height,
         }
 
-    bin_score_baseline_file = None
     if not params.scores_gate_rank:
         # No order, so nothing to reference along. Not withheld because an input was named:
         # the baseline references the enrichment and the parent references the mean bin, which
@@ -529,8 +525,7 @@ def _score_one_condition(
         else:
             bin_score_file = write_table(bin_score, out_dir, score_file_name(OUT_BIN_SCORE, index))
             # The same reference at protein grain: each protein against its own parent's
-            # protein. No baseline band here — the synonymous variants were pooled into the
-            # parent protein, so there is no set left to measure noise from at this grain.
+            # protein.
             if rolled is not None and scored_rolled is not None:
                 rolled_bin, rolled_mode = scoring.bin_scores(
                     scored_rolled, _parents_at_protein_grain(scopes, proteins), protein_parent
@@ -540,10 +535,6 @@ def _score_one_condition(
                         rolled_bin, out_dir, rolled_score_file_name(OUT_BIN_SCORE, index)
                     )
                     rolled["referenceMode"] = rolled_mode
-            bin_score_baseline_file = _write_bin_score_baseline(
-                scored.join(bin_score, on=COL_VARIANT, how="inner"),
-                scopes, variant_parent, index, out_dir,
-            )
 
     # Without an order the rank mean cannot rank anything, so the cut falls back to read depth.
     distribution = scoring.read_distribution(
@@ -567,7 +558,7 @@ def _score_one_condition(
             summaries, by_parent = _baseline_summaries(enrichments, scopes, params)
             position_rows = _baseline_positions(enrichments, scopes, params)
             gate_enrichments = _write_gate_enrichments(
-                enrichments, summaries, by_parent, position_rows, variant_parent,
+                enrichments, summaries, by_parent, position_rows,
                 params, index, out_dir,
             )
             # Only now, after the baseline. From the pooled reads, as an amino-acid-grain run
@@ -585,7 +576,6 @@ def _score_one_condition(
                         summaries,
                         by_parent,
                         {},
-                        protein_parent,
                         params,
                         index,
                         out_dir,
@@ -597,8 +587,7 @@ def _score_one_condition(
         "condition": condition,
         "gateRankMeanFile": gate_rank_mean_file,
         "binScoreFile": bin_score_file,
-        # The noise band on `binScore`, one row per parent. Gate-ranking mode only.
-        "binScoreBaselineFile": bin_score_baseline_file,
+        # The reference level for `binScore`, one row per parent. Gate-ranking mode only.
         "readDistributionFile": distribution_file,
         "referenceMode": reference_mode,
         "gatesCollected": _gates_collected(ranked_c, params.gate_ranks),
@@ -725,47 +714,6 @@ def _parents_at_protein_grain(
     return out
 
 
-def _write_bin_score_baseline(
-    scored: pl.DataFrame,
-    scopes: dict[str, ParentScope],
-    variant_parent: pl.DataFrame | None,
-    index: int,
-    out_dir: Path,
-) -> str | None:
-    """The baseline of `binScore` itself, one row per parent, for one condition.
-
-    Gate-ranking mode only. `binScore` already subtracts the parent, so this level is not a
-    zero point — it should read near zero, and a level far from it says the parent sequence is
-    not typical of its own synonymous family. The spread is what the level cannot give: how
-    wide the noise is, in gate steps.
-    """
-    if OUT_BIN_SCORE not in scored.columns:
-        return None
-    rows = []
-    for parent_id, scope in scopes.items():
-        own = scored
-        if variant_parent is not None:
-            keys = variant_parent.filter(pl.col(COL_PARENT_ID) == parent_id).select(COL_VARIANT)
-            own = scored.join(keys, on=COL_VARIANT, how="inner")
-        summary = scoring.value_baseline(own, OUT_BIN_SCORE, scope.baseline)
-        if summary is None:
-            continue
-        row = {COL_PARENT_ID: parent_id, OUT_BASELINE_LEVEL: summary["level"]}
-        row.update(
-            {
-                scoring.percentile_column(percentile): summary["spread"][f"p{percentile}"]
-                for percentile in BASELINE_PERCENTILES
-            }
-        )
-        row[OUT_BASELINE_VARIANTS] = summary["variants"]
-        rows.append(row)
-    if not rows:
-        return None
-    return write_table(
-        pl.DataFrame(rows).sort(COL_PARENT_ID), out_dir, baseline_bin_score_file_name(index)
-    )
-
-
 def _baseline_summaries(
     enrichments: pl.DataFrame, scopes: dict[str, ParentScope], params: Params
 ) -> tuple[dict[str, dict], dict[str, pl.DataFrame]]:
@@ -784,15 +732,13 @@ def _baseline_summaries(
         if len(scopes) == 1:
             single = summary
         for gate, values in summary.items():
-            row = {COL_PARENT_ID: parent_id, OUT_BASELINE_LEVEL: values["level"]}
-            row.update(
+            per_parent.setdefault(gate, []).append(
                 {
-                    scoring.percentile_column(percentile): values["spread"][f"p{percentile}"]
-                    for percentile in BASELINE_PERCENTILES
+                    COL_PARENT_ID: parent_id,
+                    OUT_BASELINE_LEVEL: values["level"],
+                    OUT_BASELINE_VARIANTS: values["variants"],
                 }
             )
-            row[OUT_BASELINE_VARIANTS] = values["variants"]
-            per_parent.setdefault(gate, []).append(row)
 
     frames = {
         gate: pl.DataFrame(rows).sort(COL_PARENT_ID) for gate, rows in per_parent.items() if rows
@@ -805,9 +751,9 @@ def _baseline_positions(
 ) -> dict[str, pl.DataFrame]:
     """Per gate, the baseline split by codon position, labelled with each parent's own numbering.
 
-    Each parent's offsets are matched against its own rows of the profiler's residue table, so
-    a dataset carrying several no longer loses the per-position output outright. A parent whose
-    alignment did not verify contributes nothing and the others still do.
+    Each parent's offsets are matched against its own rows of the profiler's residue table, so a
+    dataset carrying several keeps the per-position output. A parent whose alignment did not
+    verify contributes nothing and the others still do.
     """
     by_gate: dict[str, list[pl.DataFrame]] = {}
     for scope in scopes.values():
@@ -826,7 +772,6 @@ def _write_gate_enrichments(
     summaries: dict[str, dict],
     by_parent: dict[str, pl.DataFrame],
     positions: dict[str, pl.DataFrame],
-    key_parent: pl.DataFrame | None,
     params: Params,
     index: int,
     out_dir: Path,
@@ -851,28 +796,6 @@ def _write_gate_enrichments(
         if OUT_UNCERTAINTY in rows.columns:
             columns += [OUT_UNCERTAINTY, OUT_NT_VARIANTS]
 
-        # The enrichment against its own parent's baseline, so 1.0 means "behaves like a
-        # variant of no effect" on every gate, condition and parent. Divided, not subtracted:
-        # an enrichment is a ratio, and subtracting would leave the gates incomparable.
-        #
-        # Absent where no baseline resolved, or where its level is zero — there is no usable
-        # divisor, and an infinity is not a measurement.
-        levels = by_parent.get(gate)
-        if levels is not None and key_parent is not None:
-            usable = levels.filter(pl.col(OUT_BASELINE_LEVEL) > 0).select(
-                COL_PARENT_ID, OUT_BASELINE_LEVEL
-            )
-            if usable.height > 0:
-                rows = (
-                    rows.join(key_parent, on=COL_VARIANT, how="left")
-                    .join(usable, on=COL_PARENT_ID, how="left")
-                    .with_columns(
-                        (pl.col(OUT_GATE_ENRICHMENT) / pl.col(OUT_BASELINE_LEVEL)).alias(
-                            OUT_ENRICHMENT_VS_BASELINE
-                        )
-                    )
-                )
-                columns += [OUT_ENRICHMENT_VS_BASELINE]
         # The two levels must write to different names, or the measured values are lost
         # silently — same file, no error.
         name = (
@@ -906,9 +829,6 @@ def _write_gate_enrichments(
                 "gate": gate,
                 "rank": rank,
                 "file": file_name,
-                # Whether the file carries the vs-baseline column. The workflow cannot derive
-                # it: the annotations are absent on a multi-parent run where the column is not.
-                "hasVsBaseline": OUT_ENRICHMENT_VS_BASELINE in columns,
                 "variantsEnriched": rows.height,
                 # Null is not zero: 0 would be a baseline measured at complete depletion.
                 "baseline": summaries.get(gate),

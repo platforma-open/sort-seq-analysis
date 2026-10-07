@@ -38,10 +38,6 @@ OUT_GATE_FREQUENCY = "gateFrequency"
 OUT_GATE_READS = "gateReads"
 OUT_GATE_ENRICHMENT = "gateEnrichment"
 OUT_INPUT_READS = "inputReads"
-# The enrichment divided by its own parent's baseline level for that gate. 1.0 is a variant
-# behaving like one of no effect — the same zero point on every gate, condition and parent.
-OUT_ENRICHMENT_VS_BASELINE = "gateEnrichmentVsBaseline"
-
 # `position` is this block's own codon offset, zero-based — NOT the profiler's position
 # label. Aligning the two is `pipeline._align_positions`; being one out is undetectable
 # downstream.
@@ -82,9 +78,6 @@ BASELINE_FILE_PATTERN = "baseline_c{index}_g{rank}.tsv"
 # The same baseline per gate, one row per parent. Keyed on [parentId] alone, so a dataset
 # carrying several parents reports each — an annotation on the enrichment column can hold one.
 BASELINE_GATE_FILE_PATTERN = "baseline_gate_c{index}_g{rank}.tsv"
-# The baseline of `binScore` itself, one row per parent. Gate-ranking mode only, where the
-# score is per condition rather than per gate.
-BASELINE_BIN_SCORE_FILE_PATTERN = "baseline_binScore_c{index}.tsv"
 BASELINE_FILE_SET_REGEX = r"^baseline_.*\.tsv$"
 
 SCORE_FILE_SET_REGEX = r"^score_.*\.tsv$"
@@ -106,9 +99,6 @@ RUN_MODE_GATE_RANKING = "gate-ranking"
 RUN_MODE_ENRICHMENT = "enrichment"
 
 # --- Baseline options -------------------------------------------------------
-# Wild type and a named sequence are single variants, so their spread is degenerate. Only
-# the synonymous set is a population.
-
 BASELINE_WILD_TYPE = "wild-type"
 BASELINE_SYNONYMOUS = "synonymous"
 BASELINE_SEQUENCE = "sequence"
@@ -120,10 +110,6 @@ BASELINE_ABSENT_PARENT_UNIDENTIFIED = "parent-not-identified"
 BASELINE_ABSENT_NEEDS_NUCLEOTIDE = "synonymous-baseline-needs-nucleotide-grain"
 BASELINE_ABSENT_NO_SYNONYMOUS = "no-synonymous-variants"
 BASELINE_ABSENT_SEQUENCE_UNKNOWN = "named-sequence-absent-from-dataset"
-
-# Percentiles, never a standard error: this is a population spread, and an SE over ~70
-# variants is roughly 8x tighter than the spread it would be mistaken for.
-BASELINE_PERCENTILES = (5, 25, 75, 95)
 
 # --- Codon facts ------------------------------------------------------------
 
