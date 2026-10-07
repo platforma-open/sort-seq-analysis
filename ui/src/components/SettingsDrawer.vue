@@ -112,10 +112,8 @@ function resetGateOrder() {
 const isNucleotide = computed(() => app.model.outputs.datasetIsNucleotide);
 
 /**
- * The baseline is the parent's synonymous variants, and nothing else. One variant cannot scatter,
- * so a single-sequence baseline has a zero-width band that reads as "no variant is within the
- * noise"; and the per-position split, which is what the Mutation Explorer draws, exists only for
- * this set. `BaselineOption` still carries the other two so an existing block keeps running.
+ * The baseline is the parent's synonymous variants. `BaselineOption` carries two further values
+ * the drawer does not offer, so a block already holding one keeps running.
  */
 const synonymousBaseline = computed({
   get: () => app.model.data.baseline === "synonymous",

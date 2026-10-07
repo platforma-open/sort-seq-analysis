@@ -376,9 +376,6 @@ self.body(func(inputs) {
 			}
 
 			// The same reference at protein grain: each protein against its own parent's protein.
-			// It carries no baseline band — the synonymous variants were pooled into the parent
-			// protein, so there is no set left to measure noise from here. The band stays on the
-			// nucleotide table, where it was measured.
 			if !is_undefined(entry.rolled.binScoreFile) {
 				collect(scoreEntries, importOne(
 					scoreFiles[entry.rolled.binScoreFile],

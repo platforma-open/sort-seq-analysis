@@ -38,9 +38,6 @@ OUT_GATE_FREQUENCY = "gateFrequency"
 OUT_GATE_READS = "gateReads"
 OUT_GATE_ENRICHMENT = "gateEnrichment"
 OUT_INPUT_READS = "inputReads"
-# The enrichment divided by its own parent's baseline level for that gate. 1.0 is a variant
-# behaving like one of no effect — the same zero point on every gate, condition and parent.
-
 # `position` is this block's own codon offset, zero-based — NOT the profiler's position
 # label. Aligning the two is `pipeline._align_positions`; being one out is undetectable
 # downstream.
@@ -81,8 +78,6 @@ BASELINE_FILE_PATTERN = "baseline_c{index}_g{rank}.tsv"
 # The same baseline per gate, one row per parent. Keyed on [parentId] alone, so a dataset
 # carrying several parents reports each — an annotation on the enrichment column can hold one.
 BASELINE_GATE_FILE_PATTERN = "baseline_gate_c{index}_g{rank}.tsv"
-# The baseline of `binScore` itself, one row per parent. Gate-ranking mode only, where the
-# score is per condition rather than per gate.
 BASELINE_FILE_SET_REGEX = r"^baseline_.*\.tsv$"
 
 SCORE_FILE_SET_REGEX = r"^score_.*\.tsv$"

@@ -214,10 +214,6 @@ export type ParentSummary = {
 /**
  * The protein level, where the run could reach it. Emitted beside the measured level rather
  * than instead of it.
- *
- * It carries no baseline band: the synonymous variants are pooled into the parent protein, so
- * at this grain there is no set left to measure noise from. The band stays on the nucleotide
- * level, where it was measured.
  */
 export type RolledSummary = {
   /** Null where the gates carry no order, and no rank metric is produced. */

@@ -52,7 +52,6 @@ export const FacsBin = {
   /** Per parent, for the whole run. Emitted in every mode, so the parents are always visible. */
   ParentVariants: "pl7.app/facsBin/parentVariants",
   ParentReads: "pl7.app/facsBin/parentReads",
-  /** The enrichment divided by its own parent's baseline. 1.0 is a variant of no effect. */
   /**
    * The per-gate baseline, keyed on `[parentId]` rather than the variant axis — one row per
    * parent, so a dataset carrying several reports each.
