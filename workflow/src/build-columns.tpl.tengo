@@ -95,9 +95,12 @@ self.body(func(inputs) {
 	}
 	// The measured and protein columns share names and labels, and both derive from the one
 	// nucleotide abundance column, so its trace cannot tell them apart. This step does.
+	//
+	// The type is the profiler's level type: label derivation counts a type from the newest
+	// step, so this step shadows the inherited "NT Variants" instead of rendering beside it.
 	levelStep := func(alphabet) {
 		return {
-			type: "milaboratories.sort-seq-analysis.level",
+			type: "milaboratories.synthetic-repertoire-profiler.level",
 			importance: 80,
 			label: alphabet == "nucleotide" ? "NT Variants" : "AA Variants"
 		}
