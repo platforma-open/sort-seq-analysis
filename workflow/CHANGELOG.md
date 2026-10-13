@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.sort-seq-analysis.workflow
 
+## 1.2.2
+
+### Patch Changes
+
+- 1f68a5d: Fix column traces
+
 ## 1.2.1
 
 ### Patch Changes
