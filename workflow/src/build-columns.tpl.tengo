@@ -88,11 +88,24 @@ self.body(func(inputs) {
 
 	// makeTrace bundles the upstream abundance provenance with this block's own step;
 	// trace.inject then rewrites only the small spec resources.
-	trace := pSpec.makeTrace(inputs.abundanceSpec, {
+	blockStep := {
 		type: "milaboratories.sort-seq-analysis",
 		importance: 30,
 		label: "Sort-Seq Analysis"
-	})
+	}
+	// The measured and protein columns share names and labels, and both derive from the one
+	// nucleotide abundance column, so its trace cannot tell them apart. This step does.
+	levelStep := func(alphabet) {
+		return {
+			type: "milaboratories.sort-seq-analysis.level",
+			importance: 80,
+			label: alphabet == "nucleotide" ? "NT Variants" : "AA Variants"
+		}
+	}
+	// For the per-parent columns, which have no twin at the other level.
+	trace := pSpec.makeTrace(inputs.abundanceSpec, blockStep)
+	measuredTrace := pSpec.makeTrace(inputs.abundanceSpec, blockStep, levelStep(measuredAlphabet))
+	proteinTrace := pSpec.makeTrace(inputs.abundanceSpec, blockStep, levelStep("aminoacid"))
 
 	// For the columns read against the baseline. Claimed ONLY when it resolved. The plain
 	// enrichment is always against the input, so it says "input" whatever the baseline: naming
@@ -117,12 +130,15 @@ self.body(func(inputs) {
 		}, { splitDataAndSpec: true, cpu: 1, mem: "8GiB" })
 	}
 
-	collect := func(target, imported) {
+	collect := func(target, entryTrace, imported) {
 		// Sorted: add() order feeds the frame's resource CID, and Tengo map iteration is not
 		// order-guaranteed — an unsorted loop gives a CIDConflictError on re-render.
 		for key in maps.getKeys(imported) {
 			ll.assert(is_undefined(target[key]), "duplicate pframe entry key: %v", key)
-			target[key] = imported[key]
+			target[key] = {
+				spec: entryTrace.inject(imported[key].spec),
+				data: imported[key].data
+			}
 		}
 	}
 
@@ -146,7 +162,7 @@ self.body(func(inputs) {
 		// hand-built one resolves against the wrong variant axis on some projects.
 		// Absent where the gates carry no order: a rank mean would claim one.
 		if !is_undefined(entry.gateRankMeanFile) {
-		collect(scoreEntries, importOne(
+		collect(scoreEntries, measuredTrace, importOne(
 			scoreFiles[entry.gateRankMeanFile],
 			"gateRankMean",
 			"gateRankMean_" + suffix,
@@ -179,7 +195,7 @@ self.body(func(inputs) {
 		// Not built at all rather than built empty: an empty column would claim every variant
 		// was unscorable here.
 		if !is_undefined(entry.binScoreFile) {
-			collect(scoreEntries, importOne(
+			collect(scoreEntries, measuredTrace, importOne(
 				scoreFiles[entry.binScoreFile],
 				"binScore",
 				"binScore_" + suffix,
@@ -242,7 +258,7 @@ self.body(func(inputs) {
 				gateAnnotations["pl7.app/facsBin/baselineVariants"] = string(json.encode(gate.baseline.variants))
 			}
 
-			collect(scoreEntries, importOne(
+			collect(scoreEntries, measuredTrace, importOne(
 				scoreFiles[gate.file],
 				"gateEnrichment",
 				// Suffixed by the gate value, not the rank: a JSON number's Tengo string form is
@@ -278,7 +294,7 @@ self.body(func(inputs) {
 					{ column: "baselineLevel", id: "gateBaselineLevel_", name: "pl7.app/facsBin/gateBaselineLevel", type: "Double", fmt: ".3~g", label: "Baseline ", desc: "Where a variant of no effect sits in this gate, measured on this parent's own baseline set. The median, because an enrichment has a long tail.", show: "default", order: "70350" },
 					{ column: "baselineVariants", id: "gateBaselineVariants_", name: "pl7.app/facsBin/gateBaselineVariants", type: "Int", fmt: ",d", label: "Baseline Variants ", desc: "How many of this parent's baseline variants survived the read floor here and backed the level beside it.", show: "optional", order: "70353" }
 				] {
-					collect(scoreEntries, importOne(
+					collect(scoreEntries, trace, importOne(
 						baselineFiles[gate.baselineGateFile],
 						quantity.column,
 						quantity.id + suffix + "_" + strings.substituteSpecialCharacters(gate.gate),
@@ -314,7 +330,7 @@ self.body(func(inputs) {
 					{ column: "parentId", spec: parentIdAxisSpec },
 					{ column: "position", spec: positionAxisSpec }
 				]
-				collect(scoreEntries, importOne(
+				collect(scoreEntries, trace, importOne(
 					baselineFiles[gate.baselinePositionFile],
 					"baselineLevel",
 					"baselineLevel_" + suffix + "_" + strings.substituteSpecialCharacters(gate.gate),
@@ -348,7 +364,7 @@ self.body(func(inputs) {
 			proteinAxes := [{ column: "variantKey", spec: proteinAxisSpec }]
 
 			if !is_undefined(entry.rolled.gateRankMeanFile) {
-			collect(scoreEntries, importOne(
+			collect(scoreEntries, proteinTrace, importOne(
 				scoreFiles[entry.rolled.gateRankMeanFile],
 				"gateRankMean",
 				"gateRankMeanAa_" + suffix,
@@ -377,7 +393,7 @@ self.body(func(inputs) {
 
 			// The same reference at protein grain: each protein against its own parent's protein.
 			if !is_undefined(entry.rolled.binScoreFile) {
-				collect(scoreEntries, importOne(
+				collect(scoreEntries, proteinTrace, importOne(
 					scoreFiles[entry.rolled.binScoreFile],
 					"binScore",
 					"binScoreAa_" + suffix,
@@ -410,7 +426,7 @@ self.body(func(inputs) {
 				{ column: "uncertainty", id: "gateRankMeanUncertaintyAa_", name: "pl7.app/facsBin/gateRankMeanUncertainty", type: "Double", fmt: ".3f", label: "Mean Bin Error (", desc: "The larger of the counting error and the disagreement between this protein's nucleotide variants.", order: "70150" },
 				{ column: "ntVariants", id: "gateRankMeanNtVariantsAa_", name: "pl7.app/facsBin/ntVariants", type: "Int", fmt: ",d", label: "NT Variants (", desc: "How many of this protein's nucleotide variants passed the read floor and entered the error estimate.", order: "70160" }
 			] {
-				collect(scoreEntries, importOne(
+				collect(scoreEntries, proteinTrace, importOne(
 					scoreFiles[entry.rolled.gateRankMeanFile],
 					quantity.column,
 					quantity.id + suffix,
@@ -451,7 +467,7 @@ self.body(func(inputs) {
 					gateAnno["pl7.app/facsBin/baselineLevel"] = string(json.encode(gate.baseline.level))
 					gateAnno["pl7.app/facsBin/baselineVariants"] = string(json.encode(gate.baseline.variants))
 				}
-				collect(scoreEntries, importOne(
+				collect(scoreEntries, proteinTrace, importOne(
 					scoreFiles[gate.file],
 					"gateEnrichment",
 					"gateEnrichmentAa_" + suffix + "_" + strings.substituteSpecialCharacters(gate.gate),
@@ -476,7 +492,7 @@ self.body(func(inputs) {
 					{ column: "uncertainty", id: "gateEnrichmentUncertaintyAa_", name: "pl7.app/facsBin/gateEnrichmentUncertainty", type: "Double", fmt: ".3~g", label: "Enrichment Error ", desc: "The standard error of the enrichment, in the same units: the larger of the counting error and the disagreement between this protein's nucleotide variants. Below about 20 reads it understates the error; check the read counts.", order: "70310" },
 					{ column: "ntVariants", id: "gateEnrichmentNtVariantsAa_", name: "pl7.app/facsBin/gateEnrichmentNtVariants", type: "Int", fmt: ",d", label: "Enrichment NT Variants ", desc: "How many of this protein's nucleotide variants passed the read floor and entered the error estimate.", order: "70320" }
 				] {
-					collect(scoreEntries, importOne(
+					collect(scoreEntries, proteinTrace, importOne(
 						scoreFiles[gate.file],
 						quantity.column,
 						quantity.id + suffix + "_" + strings.substituteSpecialCharacters(gate.gate),
@@ -513,7 +529,7 @@ self.body(func(inputs) {
 			{ column: "gate", spec: gateAxisSpec }
 		]
 
-		collect(distributionEntries, importOne(
+		collect(distributionEntries, measuredTrace, importOne(
 			distributionFiles[entry.readDistributionFile],
 			"gateFrequency",
 			"gateFrequency_" + suffix,
@@ -534,7 +550,7 @@ self.body(func(inputs) {
 		))
 
 		// Both travel: four reads and four thousand draw the same profile.
-		collect(distributionEntries, importOne(
+		collect(distributionEntries, measuredTrace, importOne(
 			distributionFiles[entry.readDistributionFile],
 			"gateReads",
 			"gateReads_" + suffix,
@@ -563,7 +579,7 @@ self.body(func(inputs) {
 			{ column: "parentVariants", id: "parentVariants", name: "pl7.app/facsBin/parentVariants", fmt: ",d", label: "Variants", desc: "How many variants this run scored under this parent.", order: "70010" },
 			{ column: "parentReads", id: "parentReads", name: "pl7.app/facsBin/parentReads", fmt: ",d", label: "Reads", desc: "How many reads this parent's variants carry across every gate the run covers.", order: "70020" }
 		] {
-			collect(scoreEntries, importOne(
+			collect(scoreEntries, trace, importOne(
 				scoreFiles[manifest.parentSummaryFile],
 				quantity.column,
 				quantity.id,
@@ -588,7 +604,7 @@ self.body(func(inputs) {
 		builder := pframes.pFrameBuilder()
 		for key in maps.getKeys(entries) {
 			value := entries[key]
-			builder.add(key, trace.inject(value.spec), value.data)
+			builder.add(key, value.spec, value.data)
 		}
 		return builder.build()
 	}
