@@ -21,6 +21,7 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
 render := import("@platforma-sdk/workflow-tengo:render")
 canonical := import("@platforma-sdk/workflow-tengo:canonical")
+json := import("json")
 
 scoreSw := assets.importSoftware("@platforma-open/milaboratories.sort-seq-analysis.software:main")
 buildColumnsTpl := assets.importTemplate(":build-columns")
@@ -107,6 +108,11 @@ wf.prepare(func(args) {
 		domain: { "pl7.app/alphabet": "aminoacid" }
 	}, "parentResidue")
 
+	// Optional subset column picked alongside the dataset (PlDatasetSelector)
+	if !is_undefined(args.inputFilter) {
+		bb.addRef(json.decode(args.inputFilter))
+	}
+
 	// Full await (spec and data) delays this block's spec emission, but the body exports these
 	// columns' values as tables, so it genuinely consumes the data.
 	return { columns: bb.build() }
@@ -121,6 +127,16 @@ wf.body(func(args) {
 	variantAxisSpec := abundanceSpec.axesSpec[1]
 
 	hasSortFraction := !is_undefined(args.sortFractionColumnRef)
+
+	// Optional subset: only its variants' reads enter the computation. The trace roots in the
+	// filter so downstream labels name it.
+	filterColumn := undefined
+	traceSpec := abundanceSpec
+	if !is_undefined(args.inputFilter) {
+		f := columns.getColumn(json.decode(args.inputFilter))
+		filterColumn = { spec: f.spec, data: f.data }
+		traceSpec = f.spec
+	}
 
 	// More than one match is no answer: no first-match, no ranking. A tie-break would be this
 	// block's invention.
@@ -191,14 +207,31 @@ wf.body(func(args) {
 
 	// Joined on shared axes: abundance ([sample][variant]) plus metadata ([sample]) gives one
 	// row per (sample, variant).
-	readsBuilder := pframes.tsvFileBuilder()
-	readsBuilder.setAxisHeader(sampleAxisSpec.name, "sampleId")
-	readsBuilder.setAxisHeader(variantAxisSpec.name, "variantKey")
-	readsBuilder.add(columns.getColumn("main"), { header: "reads" })
-	readsBuilder.add(columns.getColumn("condition"), { header: "condition" })
-	readsBuilder.add(columns.getColumn("gate"), { header: "gate" })
+	// With a subset, the abundance is the filtered primary. The per-variant tables below stay
+	// whole: they are lookups, and only variants with reads are scored.
+	readsBuilder := undefined
+	addReadsColumn := undefined
+	if is_undefined(filterColumn) {
+		readsBuilder = pframes.tsvFileBuilder()
+		readsBuilder.setAxisHeader(sampleAxisSpec.name, "sampleId")
+		readsBuilder.setAxisHeader(variantAxisSpec.name, "variantKey")
+		readsBuilder.add(columns.getColumn("main"), { header: "reads" })
+		addReadsColumn = readsBuilder.add
+	} else {
+		readsBuilder = pframes.tableBuilder("tsv").setColumnJoin("left")
+		readsBuilder.setAxisHeader(sampleAxisSpec.name, "sampleId")
+		readsBuilder.setAxisHeader(variantAxisSpec.name, "variantKey")
+		readsBuilder.addPrimary("main", {
+			__isPrimaryRef: "v1",
+			column: columns.getColumn("main"),
+			filter: filterColumn
+		}, { header: "reads" })
+		addReadsColumn = readsBuilder.addColumn
+	}
+	addReadsColumn(columns.getColumn("condition"), { header: "condition" })
+	addReadsColumn(columns.getColumn("gate"), { header: "gate" })
 	if hasSortFraction {
-		readsBuilder.add(columns.getColumn("sortFraction"), { header: SORT_FRACTION_HEADER })
+		addReadsColumn(columns.getColumn("sortFraction"), { header: SORT_FRACTION_HEADER })
 	}
 	readsBuilder.mem("16GiB")
 	readsBuilder.cpu(1)
@@ -319,7 +352,7 @@ wf.body(func(args) {
 
 	// Ephemeral because the child reads the manifest's VALUE, which needs `awaitState`. Only
 	// this step opts out of dedup; everything expensive above it stays pure.
-	built := render.createEphemeral(buildColumnsTpl, {
+	buildColumnsInputs := {
 		manifest: score.getFileContent(MANIFEST_FILE),
 		scoreFiles: score.getFileSet("scoreFiles"),
 		distributionFiles: score.getFileSet("distributionFiles"),
@@ -334,7 +367,13 @@ wf.body(func(args) {
 		baselineFiles: score.getFileSet("baselineFiles"),
 		abundanceSpec: abundanceSpec,
 		blockId: blockId
-	})
+	}
+	// Only for a subset run, so a full-data run keeps exactly its previous inputs
+	if !is_undefined(filterColumn) {
+		buildColumnsInputs.traceSpec = traceSpec
+		buildColumnsInputs.subset = args.inputFilter
+	}
+	built := render.createEphemeral(buildColumnsTpl, buildColumnsInputs)
 
 	return {
 		outputs: {

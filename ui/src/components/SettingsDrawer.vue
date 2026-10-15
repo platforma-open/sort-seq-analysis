@@ -7,8 +7,14 @@
  *    output writing to `data` is the hairpin, and two clients would race.
  */
 import { BASELINE_AVAILABLE } from "@platforma-open/milaboratories.sort-seq-analysis.model";
-import type { SUniversalPColumnId } from "@platforma-sdk/model";
-import { getSingleColumnData, type PObjectId } from "@platforma-sdk/model";
+import type { DatasetSelection, SUniversalPColumnId } from "@platforma-sdk/model";
+import {
+  createDatasetSelection,
+  createPrimaryRef,
+  getSingleColumnData,
+  plRefsEqual,
+  type PObjectId,
+} from "@platforma-sdk/model";
 import {
   PlAccordion,
   PlAccordionSection,
@@ -17,8 +23,8 @@ import {
   PlDropdown,
   PlCheckbox,
   PlElementList,
+  PlDatasetSelector,
   PlDropdownMulti,
-  PlDropdownRef,
   PlMaskIcon24,
   PlNumberField,
   PlSlideModal,
@@ -138,6 +144,26 @@ const baselineAvailableHere = computed(
   () => isNucleotide.value !== false && app.model.data.inputGate !== undefined,
 );
 
+// The selector picks a dataset, or a dataset narrowed by one of its subset columns. A filter-only
+// change keeps the dataset, so it must not reset the settings below.
+const abundanceSelection = computed<DatasetSelection | undefined>({
+  get: () => {
+    const { abundanceRef, filterRef } = app.model.data;
+    if (abundanceRef === undefined) return undefined;
+    return createDatasetSelection(createPrimaryRef(abundanceRef, filterRef));
+  },
+  set: (selection) => {
+    const ref = selection?.primary.column;
+    const current = app.model.data.abundanceRef;
+    const sameDataset =
+      ref === undefined
+        ? current === undefined
+        : current !== undefined && plRefsEqual(ref, current, true);
+    if (!sameDataset) setAbundance(ref);
+    app.model.data.filterRef = selection?.primary.filter;
+  },
+});
+
 function setAbundance(ref: typeof app.model.data.abundanceRef) {
   // A stored anchored id is meaningless against a different anchor.
   app.model.data.abundanceRef = ref;
@@ -183,18 +209,17 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
     <template #title>Settings</template>
 
     <!-- 1. The anchor. Until one is picked, no other input has an option list. -->
-    <PlDropdownRef
-      :model-value="app.model.data.abundanceRef"
+    <PlDatasetSelector
+      v-model="abundanceSelection"
       :options="app.model.outputs.abundanceOptions ?? []"
       label="Select dataset"
       required
       clearable
-      @update:model-value="setAbundance"
     >
       <template #tooltip>
         The sequenced sort-seq run; every setting below comes from its sample annotations.
       </template>
-    </PlDropdownRef>
+    </PlDatasetSelector>
 
     <!-- Together because picking the column is what populates the list. -->
     <PlDropdown
