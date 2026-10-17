@@ -131,11 +131,9 @@ wf.body(func(args) {
 	// Optional subset: only its variants' reads enter the computation. The trace roots in the
 	// filter so downstream labels name it.
 	filterColumn := undefined
-	traceSpec := abundanceSpec
 	if !is_undefined(args.inputFilter) {
 		f := columns.getColumn(json.decode(args.inputFilter))
 		filterColumn = { spec: f.spec, data: f.data }
-		traceSpec = f.spec
 	}
 
 	// More than one match is no answer: no first-match, no ranking. A tie-break would be this
@@ -370,7 +368,7 @@ wf.body(func(args) {
 	}
 	// Only for a subset run, so a full-data run keeps exactly its previous inputs
 	if !is_undefined(filterColumn) {
-		buildColumnsInputs.traceSpec = traceSpec
+		buildColumnsInputs.traceSpec = filterColumn.spec
 		buildColumnsInputs.subset = args.inputFilter
 	}
 	built := render.createEphemeral(buildColumnsTpl, buildColumnsInputs)
