@@ -368,7 +368,8 @@ wf.body(func(args) {
 	}
 	// Only for a subset run, so a full-data run keeps exactly its previous inputs
 	if !is_undefined(filterColumn) {
-		buildColumnsInputs.traceSpec = filterColumn.spec
+		// Only the trace annotation, so unrelated filter spec edits don't re-run the sub-template
+		buildColumnsInputs.traceSpec = { annotations: { "pl7.app/trace": filterColumn.spec.annotations["pl7.app/trace"] } }
 		buildColumnsInputs.subset = args.inputFilter
 	}
 	built := render.createEphemeral(buildColumnsTpl, buildColumnsInputs)
