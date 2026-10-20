@@ -50,12 +50,16 @@ export type BlockArgs = {
   baseline?: BaselineOption;
   /** 11. The variant key the `sequence` baseline names. Set only with that option. */
   baselineSequence?: string;
+  /** The subset column's canonical id. Absent without a filter, so unfiltered args are unchanged. */
+  inputFilter?: string;
 };
 
 /** What the user edits. Projected to `BlockArgs` by the args lambda; view state never crosses. */
 export type BlockData = {
   // --- The seven arguments, in argument order ------------------------------
   abundanceRef?: PlRef;
+  /** Subset column picked with the dataset in PlDatasetSelector (e.g. a Repertoire Labeling label). */
+  filterRef?: PlRef;
   conditionColumnRef?: SUniversalPColumnId;
   gateColumnRef?: SUniversalPColumnId;
   /**

@@ -1,11 +1,15 @@
 import {
   BlockModelV3,
   type BlockRenderCtx,
+  buildDatasetOptions,
+  createGlobalPObjectId,
   createPFrameForGraphs,
   createPlDataTableV3,
   DataColumn,
+  type DatasetOption,
   discoverTableColumnSnaphots,
   type InferOutputsType,
+  isPColumnSpec,
   type PColumn,
   type PColumnSpec,
   type PColumnValues,
@@ -227,6 +231,13 @@ function buildScoresTable(ctx: BlockRenderCtx<BlockArgs, BlockData>, alphabet: s
   });
 }
 
+// Key axes of the datasets this block filters: bulk and single-cell clonotypes, and variants.
+const DATASET_KEY_AXES: ReadonlySet<string> = new Set([
+  "pl7.app/vdj/clonotypeKey",
+  "pl7.app/vdj/scClonotypeKey",
+  "pl7.app/variantKey",
+]);
+
 export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind })
   .args<BlockArgs>((data) => {
     // Throwing disables Run but carries no reason to the user; `settingsIssues` names it.
@@ -267,6 +278,11 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
         BASELINE_AVAILABLE && data.inputGate !== undefined && data.baseline === "sequence"
           ? data.baselineSequence
           : undefined,
+      // The subset's canonical column id, which the workflow stamps as the outputs'
+      // `pl7.app/inputSubset`. Absent without a filter, so unfiltered args are unchanged.
+      ...(data.filterRef !== undefined && {
+        inputFilter: createGlobalPObjectId(data.filterRef.blockId, data.filterRef.name),
+      }),
     };
   })
 
@@ -274,8 +290,23 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
   // Option lists. Four pickers, two predicates.
   // ---------------------------------------------------------------------------
 
-  /** The anchor. Matched on axis count plus the two abundance annotations, never on a name. */
-  .output("abundanceOptions", (ctx) => ctx.resultPool.getOptions(isAbundanceAnchor))
+  /**
+   * The anchor. Matched on axis count plus the two abundance annotations, never on a name.
+   * Each carries its subset columns (e.g. Repertoire Labeling labels) as filters.
+   */
+  .output(
+    "abundanceOptions",
+    (ctx): DatasetOption[] =>
+      buildDatasetOptions(ctx, {
+        primary: isAbundanceAnchor,
+        // Only subsets keyed by the dataset's key axis alone
+        filter: (spec) =>
+          isPColumnSpec(spec) &&
+          spec.axesSpec.length === 1 &&
+          DATASET_KEY_AXES.has(spec.axesSpec[0].name),
+        requireEnrichments: false,
+      }) ?? [],
+  )
 
   /** Every per-sample metadata column in the anchor's context — one query, four consumers. */
   .output("metadataColumns", (ctx) => {
