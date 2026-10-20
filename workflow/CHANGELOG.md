@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.sort-seq-analysis.workflow
 
+## 1.2.3
+
+### Patch Changes
+
+- 57a9b1d: Release every package through npm trusted publishing (OIDC) so each package's trusted publisher is used before it expires.
+- Updated dependencies [57a9b1d]
+  - @platforma-open/milaboratories.sort-seq-analysis.software@1.2.1
+
 ## 1.2.2
 
 ### Patch Changes
