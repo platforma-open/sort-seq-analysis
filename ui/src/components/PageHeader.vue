@@ -11,7 +11,7 @@
  *    button, one drawer, one place. Mounting it per page gave three `PlSlideModal`s racing
  *    over one shared open flag.
  */
-import { PlBtnGhost, PlMaskIcon24 } from "@platforma-sdk/ui-vue";
+import { PlBtnGhost, PlIcon24 } from "@platforma-sdk/ui-vue";
 import { useApp } from "../app";
 import { useSettingsDrawer } from "../useSettingsDrawer";
 import SettingsDrawer from "./SettingsDrawer.vue";
@@ -23,7 +23,7 @@ const { isOpen } = useSettingsDrawer(useApp());
   <PlBtnGhost @click.stop="isOpen = true">
     Settings
     <template #append>
-      <PlMaskIcon24 name="settings" />
+      <PlIcon24 name="settings" />
     </template>
   </PlBtnGhost>
 
