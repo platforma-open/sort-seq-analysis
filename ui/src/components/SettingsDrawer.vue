@@ -3,12 +3,15 @@
  * One control per argument. Two things are easy to "fix" wrongly:
  *
  * 1. The read-count floor is clearable — cleared IS the answer, and the normal first run.
- * 2. Column values are snapshotted on the user's gesture, never by a watcher: a watcher on an
+ * 2. The gate order is seeded on the user's gesture, never by a watcher: a watcher on an
  *    output writing to `data` is the hairpin, and two clients would race.
+ *
+ * Picked gates, the input and excluded conditions are column value ids of their columns. One no
+ * longer among the column's values stays picked and is shown as not available, with the reason
+ * in a tooltip; only picking another column clears them.
  */
 import { BASELINE_AVAILABLE } from "@platforma-open/milaboratories.sort-seq-analysis.model";
-import type { SUniversalPColumnId } from "@platforma-sdk/model";
-import { getSingleColumnData, type PObjectId } from "@platforma-sdk/model";
+import type { ColumnUniversalId, ColumnValueId, ColumnValueOption } from "@platforma-sdk/model";
 import {
   PlAccordion,
   PlAccordionSection,
@@ -18,12 +21,11 @@ import {
   PlCheckbox,
   PlElementList,
   PlDropdownMulti,
-  PlDropdownRef,
-  PlMaskIcon24,
+  PlIcon24,
   PlNumberField,
   PlSlideModal,
   PlTooltip,
-  useWatchFetch,
+  PlValueLabel,
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
@@ -38,39 +40,32 @@ const armsOpen = ref(true);
 const isOpen = defineModel<boolean>({ required: true });
 
 /**
- * Distinct values of EVERY metadata column, keyed by ref rather than role: the snapshot is
- * written in the same gesture as the pick, so the values must already be in hand. Fetching only
- * picked columns lags by a round trip and the gate-order control never appears.
+ * Values of a metadata column, as the model read them. `undefined` while they are not known, so
+ * picks are not marked as not available before the model has caught up.
  */
-const valuesByRef = useWatchFetch(
-  () => ({
-    pframe: app.model.outputs.metadataColumnsPframe,
-    columns: app.model.outputs.metadataColumns,
-  }),
-  async ({ pframe, columns }) => {
-    const out: Record<string, string[]> = {};
-    if (!pframe || !columns) return out;
-
-    for (const column of columns) {
-      const data = await getSingleColumnData(pframe, column.objectId as PObjectId);
-      const raw: unknown[] = data?.data ?? [];
-      const values = raw.filter((v): v is string | number => v !== null && v !== undefined);
-      out[column.value] = [...new Set(values.map((v) => String(v)))].sort();
-    }
-    return out;
-  },
-);
-
-function valuesFor(ref: SUniversalPColumnId | undefined): string[] {
-  if (!ref) return [];
-  return valuesByRef.value?.[ref] ?? [];
+function valueOptionsOf(column: ColumnUniversalId | undefined): ColumnValueOption[] | undefined {
+  if (column === undefined) return undefined;
+  return app.model.outputs.metadataValues?.find((entry) => entry.column === column)?.options;
 }
 
-const conditionValueOptions = computed(() =>
-  valuesFor(app.model.data.conditionColumnRef).map((value) => ({ value, label: value })),
-);
+/** The values of a column, in the order the model offers them. */
+function valuesOf(column: ColumnUniversalId | undefined): ColumnValueId[] {
+  return (valueOptionsOf(column) ?? []).map((option) => option.value);
+}
 
-const gateValues = computed(() => app.model.data.gateValues);
+const conditionValueOptions = computed(() => valueOptionsOf(app.model.data.conditionColumnRef));
+
+/**
+ * Every condition excluded leaves nothing to score: the run would produce no results, which
+ * reads like a failed run.
+ */
+const everyConditionExcluded = computed(() => {
+  const options = conditionValueOptions.value;
+  if (options === undefined || options.length === 0) return false;
+  return options.every((option) => app.model.data.excludedConditions.includes(option.value));
+});
+
+const gateValueOptions = computed(() => valueOptionsOf(app.model.data.gateColumnRef));
 
 /** `undefined` means ordered, which is the ordinary case and every block made before this. */
 const gatesOrdered = computed({
@@ -85,27 +80,30 @@ const gatesOrdered = computed({
  * the control offers what the gate-order list has had removed.
  */
 const inputGateOptions = computed(() =>
-  gateValues.value
-    .filter((value) => !app.model.data.gateOrder.includes(value))
-    .map((value) => ({ label: value, value })),
+  gateValueOptions.value?.filter((option) => !app.model.data.gateOrder.includes(option.value)),
 );
 
 /**
  * What `setGateColumn` seeds, minus the input gate — the input can never be a ranked gate, so
- * removing it is not a modification to offer undoing.
+ * removing it is not a modification to offer undoing. `undefined` while the gate column's values
+ * are not known, so a reset cannot wipe the order before they arrive.
  */
 const defaultGateOrder = computed(() =>
-  gateValues.value.filter((value) => value !== app.model.data.inputGate),
+  gateValueOptions.value
+    ?.map((option) => option.value)
+    .filter((value) => value !== app.model.data.inputGate),
 );
 
 const gateOrderModified = computed(() => {
   const current = app.model.data.gateOrder;
   const base = defaultGateOrder.value;
+  if (base === undefined) return false;
   return current.length !== base.length || current.some((value, i) => value !== base[i]);
 });
 
 function resetGateOrder() {
-  app.model.data.gateOrder = [...defaultGateOrder.value];
+  const base = defaultGateOrder.value;
+  if (base !== undefined) app.model.data.gateOrder = [...base];
 }
 
 /** `undefined` before a dataset is picked, so an unknown grain never hides a valid option. */
@@ -138,14 +136,13 @@ const baselineAvailableHere = computed(
   () => isNucleotide.value !== false && app.model.data.inputGate !== undefined,
 );
 
-function setAbundance(ref: typeof app.model.data.abundanceRef) {
-  // A stored anchored id is meaningless against a different anchor.
+function setAbundance(ref: ColumnUniversalId | undefined) {
+  // The metadata columns are picked among those on the dataset's sample axis, so another
+  // dataset's picks do not carry over.
   app.model.data.abundanceRef = ref;
   app.model.data.conditionColumnRef = undefined;
   app.model.data.gateColumnRef = undefined;
   app.model.data.sortFractionColumnRef = undefined;
-  app.model.data.conditionValues = [];
-  app.model.data.gateValues = [];
   app.model.data.gateColumnLabel = undefined;
   app.model.data.gateOrder = [];
   app.model.data.excludedConditions = [];
@@ -157,22 +154,20 @@ function setAbundance(ref: typeof app.model.data.abundanceRef) {
   app.model.data.baselineSequence = undefined;
 }
 
-function setConditionColumn(ref: SUniversalPColumnId | undefined) {
-  // Ref and snapshot in one gesture. The snapshot may go stale; re-picking refreshes it.
+function setConditionColumn(ref: ColumnUniversalId | undefined) {
+  // The exclusions are values of the old column.
   app.model.data.conditionColumnRef = ref;
-  app.model.data.conditionValues = valuesFor(ref);
   app.model.data.excludedConditions = [];
 }
 
-function setGateColumn(ref: SUniversalPColumnId | undefined) {
+function setGateColumn(ref: ColumnUniversalId | undefined) {
   app.model.data.gateColumnRef = ref;
-  app.model.data.gateValues = valuesFor(ref);
   // The label too: only the option list knows it, and the subtitle derives from `data` alone.
   app.model.data.gateColumnLabel = app.model.outputs.gateOptions?.find(
     (option) => option.value === ref,
   )?.label;
   // Seed the order from the column; a previous ordering is meaningless against a new column.
-  app.model.data.gateOrder = valuesFor(ref);
+  app.model.data.gateOrder = valuesOf(ref);
   // Same gesture, same reason: the old input was a value of the old column.
   app.model.data.inputGate = undefined;
 }
@@ -183,9 +178,9 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
     <template #title>Settings</template>
 
     <!-- 1. The anchor. Until one is picked, no other input has an option list. -->
-    <PlDropdownRef
+    <PlDropdown
       :model-value="app.model.data.abundanceRef"
-      :options="app.model.outputs.abundanceOptions ?? []"
+      :options="app.model.outputs.abundanceOptions"
       label="Select dataset"
       required
       clearable
@@ -194,12 +189,12 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
       <template #tooltip>
         The sequenced sort-seq run; every setting below comes from its sample annotations.
       </template>
-    </PlDropdownRef>
+    </PlDropdown>
 
     <!-- Together because picking the column is what populates the list. -->
     <PlDropdown
       :model-value="app.model.data.gateColumnRef"
-      :options="app.model.outputs.gateOptions ?? []"
+      :options="app.model.outputs.gateOptions"
       label="Gate column"
       required
       clearable
@@ -241,12 +236,14 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
           </PlTooltip>
         </div>
         <PlElementList v-model:items="app.model.data.gateOrder">
-          <template #item-title="{ item }">{{ item }}</template>
+          <template #item-title="{ item }">
+            <PlValueLabel :value="item" :options="gateValueOptions" />
+          </template>
         </PlElementList>
         <PlBtnGhost v-if="gateOrderModified" @click="resetGateOrder">
           Reset to default
           <template #append>
-            <PlMaskIcon24 name="reverse" />
+            <PlIcon24 name="reverse" />
           </template>
         </PlBtnGhost>
       </PlAccordionSection>
@@ -263,7 +260,7 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
         <!-- The factor column and its exclusions, together. -->
         <PlDropdown
           :model-value="app.model.data.conditionColumnRef"
-          :options="app.model.outputs.conditionOptions ?? []"
+          :options="app.model.outputs.conditionOptions"
           label="Factor column"
           required
           clearable
@@ -283,6 +280,10 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
             Levels to leave out, such as a failed sort; excluded levels produce no results.
           </template>
         </PlDropdownMulti>
+
+        <PlAlert v-if="everyConditionExcluded" type="warn">
+          Every level is excluded, so the run would produce no results. Keep at least one.
+        </PlAlert>
       </PlAccordionSection>
     </PlAccordion>
 
@@ -318,7 +319,7 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
     <PlAccordionSection label="Advanced Settings">
       <PlDropdown
         v-model="app.model.data.sortFractionColumnRef"
-        :options="app.model.outputs.sortFractionOptions ?? []"
+        :options="app.model.outputs.sortFractionOptions"
         label="Sort-fraction column"
         clearable
       >

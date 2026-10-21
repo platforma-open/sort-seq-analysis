@@ -1,34 +1,29 @@
 import {
   BlockModelV3,
   type BlockRenderCtx,
+  type ColumnRecipe,
+  columnValueLabel,
   createPFrameForGraphs,
   createPlDataTableV3,
-  DataColumn,
   discoverTableColumnSnaphots,
   type InferOutputsType,
-  type PColumn,
-  type PColumnSpec,
-  type PColumnValues,
-  type StringMatcher,
-  type SUniversalPColumnId,
+  parseColumnValueId,
 } from "@platforma-sdk/model";
 import { kind } from "@platforma-open/milaboratories.sort-seq-analysis.kind";
-import {
-  Alphabet,
-  AlphabetDomain,
-  Annotation,
-  FacsBin,
-  isAbundanceAnchor,
-  metadataSelector,
-  PColumnName,
-  sampleLabelSelector,
-} from "./columns";
+import { getAbundanceOptions, isNucleotideDataset } from "./abundance";
+import type { ColumnPickerOption } from "./column_access";
+import { exact, getOutputColumns, toPColumns } from "./column_access";
+import { Alphabet, AlphabetDomain, FacsBin, PColumnName } from "./columns";
 import { blockDataModel } from "./dataModel";
+import type { MetadataRole } from "./metadata";
+import { getMetadataOptions, getMetadataValues, getSampleLabels, narrowToRole } from "./metadata";
 import type { BlockArgs, BlockData, RunManifest } from "./types";
 
 export { blockDataModel, defaultDistributionGraphState } from "./dataModel";
 export * from "./columns";
 export * from "./types";
+export type { ColumnPickerOption } from "./column_access";
+export type { MetadataColumnValues } from "./metadata";
 
 /**
  * Whether the baseline is offered. Pairs with `EMIT_BASELINE_COLUMNS` in
@@ -58,29 +53,35 @@ export function settingsIssues(data: BlockData): string[] {
   }
 
   // The order is a selection, so coverage is deliberately NOT checked: a gate column carrying
-  // an input or a specificity arm is the ordinary case. Only non-emptiness and that it names
-  // nothing outside the column.
+  // an input or a specificity arm is the ordinary case. Only non-emptiness and that every gate
+  // was picked from the gate column. A gate the column no longer carries is shown as not
+  // available in the drawer; `data` does not hold the column's values, so it is not refused
+  // here, and neither is excluding every condition.
   //
   // Guarded on the pick so a fresh block does not get two complaints for one unmade choice.
-  if (data.gateColumnRef !== undefined) {
-    if (data.gateValues.length === 0) {
-      issues.push("The gate column has no values to rank");
-    } else if (data.gateOrder.length === 0) {
-      issues.push("Keep at least one gate in the order — every gate has been removed");
+  const gateColumn = data.gateColumnRef;
+  if (gateColumn !== undefined) {
+    if (data.gateOrder.length === 0) {
+      issues.push(
+        "Keep at least one gate in the order — the gate column has none, or every gate has been removed",
+      );
     }
-    const unknown = data.gateOrder.filter((value) => !data.gateValues.includes(value));
-    if (unknown.length > 0) {
-      issues.push(`Ordered value(s) the gate column does not carry: ${unknown.join(", ")}`);
+    const foreign = [...data.gateOrder, ...(data.inputGate === undefined ? [] : [data.inputGate])]
+      .filter((picked) => parseColumnValueId(picked).column !== gateColumn)
+      .map(columnValueLabel);
+    if (foreign.length > 0) {
+      issues.push(`Gate value(s) picked from another column: ${foreign.join(", ")}`);
     }
   }
 
-  // Refused rather than producing nothing: an empty result is indistinguishable from a
-  // failed run.
-  if (
-    data.conditionValues.length > 0 &&
-    data.conditionValues.every((value) => data.excludedConditions.includes(value))
-  ) {
-    issues.push("At least one condition must remain — every value is currently excluded");
+  const conditionColumn = data.conditionColumnRef;
+  if (conditionColumn !== undefined) {
+    const foreign = data.excludedConditions
+      .filter((picked) => parseColumnValueId(picked).column !== conditionColumn)
+      .map(columnValueLabel);
+    if (foreign.length > 0) {
+      issues.push(`Excluded condition(s) picked from another column: ${foreign.join(", ")}`);
+    }
   }
 
   if (data.readFloor !== undefined && data.readFloor < 0) {
@@ -99,10 +100,8 @@ export function settingsIssues(data: BlockData): string[] {
       // A gate that referenced itself would give exactly 1 everywhere. Reachable by
       // reordering after the pick, so the option list alone is not enough.
       issues.push(
-        `The input '${data.inputGate}' is also a ranked gate — remove it from the gate order`,
+        `The input '${columnValueLabel(data.inputGate)}' is also a ranked gate — remove it from the gate order`,
       );
-    } else if (data.gateValues.length > 0 && !data.gateValues.includes(data.inputGate)) {
-      issues.push(`The gate column does not carry the input value '${data.inputGate}'`);
     }
   }
 
@@ -110,23 +109,6 @@ export function settingsIssues(data: BlockData): string[] {
   // and the run degrades loudly anyway. The drawer shows a warning instead.
 
   return issues;
-}
-
-/** A bare string in a selector is a REGEX, so an exact name must say so. */
-function exact(name: string): StringMatcher {
-  return { type: "exact", value: name };
-}
-
-/** Conditions read off the domain key, sorted — they carry no order of their own. */
-function distributionConditionsOf<C extends { spec: PColumnSpec }>(
-  columns: readonly C[],
-): string[] {
-  const conditions = new Set<string>();
-  for (const column of columns) {
-    const condition = column.spec.domain?.[FacsBin.ConditionDomain];
-    if (condition !== undefined) conditions.add(condition);
-  }
-  return [...conditions].sort();
 }
 
 /**
@@ -143,95 +125,21 @@ export function distributionPlotTitle(
     : `Variant Frequency — ${condition}`;
 }
 
-/**
- * One scores table for one grain. A nucleotide run emits two column families on two axes, told
- * apart by the `pl7.app/alphabet` domain. `undefined` where the run produced none.
- */
-function buildScoresTable(ctx: BlockRenderCtx<BlockArgs, BlockData>, alphabet: string) {
-  const all = ctx.outputs?.resolve("scoresPf")?.getPColumns() as
-    | PColumn<PColumnValues>[]
-    | undefined;
-  if (!all) return undefined;
-  // The alphabet is the only thing separating the two families: they share every name and
-  // condition domain, and mixing them joins protein scores to nothing.
-  const own = all.filter((column) => column.spec.domain?.[AlphabetDomain] === alphabet);
-  if (own.length === 0) return undefined;
-
-  // Unordered gates produce no `gateRankMean`, so the enrichment carries the anchor there.
-  // Both are keyed on the variant axes, so the key shape below is the same either way.
-  const pickAnchor = (name: string) =>
-    own
-      .filter((column) => column.spec.name === name)
-      .sort((a, b) =>
-        (
-          (a.spec.domain?.[FacsBin.ConditionDomain] ?? "") +
-          "\0" +
-          (a.spec.domain?.[FacsBin.GateDomain] ?? "")
-        ).localeCompare(
-          (b.spec.domain?.[FacsBin.ConditionDomain] ?? "") +
-            "\0" +
-            (b.spec.domain?.[FacsBin.GateDomain] ?? ""),
-        ),
-      )[0];
-  const anchor = pickAnchor(FacsBin.GateRankMean) ?? pickAnchor(FacsBin.GateEnrichment);
-  if (!anchor) return undefined;
-
-  // Primary columns, so they are always shown and never compete with a pool namesake.
-  //
-  // Filtered to the anchor's own key shape: `scoresPf` also carries the per-position baseline
-  // on `[parentId, position]`, and passing that in fails the whole table with
-  // `discoverColumns failed`. Compared on axis names, so a new differently-keyed column does
-  // not need this list updated.
-  const anchorKey = anchor.spec.axesSpec.map((axis) => axis.name).join("\0");
-  const primaryColumns = own
-    .filter((column) => column.spec.axesSpec.map((axis) => axis.name).join("\0") === anchorKey)
-    .map((column) => DataColumn.fromColumn(column));
-
-  // Everything else the variant axis reaches.
-  //
-  // The WHOLE `pl7.app/facsBin/` namespace is excluded, this block's own included. A second
-  // sort-seq block's columns are identical in everything discovery matches on, and a selector
-  // can require a domain value but cannot refuse one — so there is no selector admitting ours
-  // and refusing a sibling's. This also drops the duplicate our own `exports.pf` creates.
-  const { primary, secondary } = discoverTableColumnSnaphots(ctx, {
-    anchors: { main: anchor.spec },
-    // Strict axis equality. "related" reaches every column the variant axis participates in,
-    // giving a row per variant per position per gate.
-    selector: {
-      mode: "exact",
-      exclude: [{ name: [{ type: "regex", value: "^pl7\\.app/facsBin/.*$" }] }],
-    },
-  });
-
-  return createPlDataTableV3(ctx, {
-    primaryColumns,
-    columns: [...primary, ...secondary],
-    tableState:
-      alphabet === Alphabet.Nucleotide ? ctx.data.ntResultsTableState : ctx.data.resultsTableState,
-    displayOptions: {
-      /**
-       * First match wins, and an unmatched column keeps its own annotation — upstream sets
-       * `default` on nearly everything, so the catch-all last is required.
-       *
-       * `optional` rather than `hidden`: they stay one click away in the column picker.
-       */
-      visibility: [
-        { match: { name: exact(FacsBin.GateRankMean) }, visibility: "default" },
-        { match: { name: exact(FacsBin.BinScore) }, visibility: "default" },
-        { match: { name: exact(FacsBin.GateEnrichment) }, visibility: "default" },
-        { match: { name: exact(PColumnName.VariantLabel) }, visibility: "default" },
-        { match: { name: exact(PColumnName.Mutations) }, visibility: "default" },
-        { match: { name: ".*" }, visibility: "optional" },
-      ],
-    },
-  });
-}
-
 export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind })
   .args<BlockArgs>((data) => {
     // Throwing disables Run but carries no reason to the user; `settingsIssues` names it.
     const issues = settingsIssues(data);
     if (issues.length > 0) throw new Error(issues.join("; "));
+
+    // `settingsIssues` refuses each of these absent; checked again so the type says so.
+    const { abundanceRef, conditionColumnRef, gateColumnRef } = data;
+    if (
+      abundanceRef === undefined ||
+      conditionColumnRef === undefined ||
+      gateColumnRef === undefined
+    ) {
+      throw new Error("Select the dataset, the condition column and the gate column");
+    }
 
     // Two facts, not a mode. An enrichment needs a reference, so naming one is what asks for
     // it; ranks need an order, so the toggle is what asks for those. `inputGate` carries the
@@ -239,15 +147,16 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
     const ordered = data.gatesOrdered !== false;
 
     return {
-      abundanceRef: data.abundanceRef!,
-      conditionColumnRef: data.conditionColumnRef!,
-      gateColumnRef: data.gateColumnRef!,
+      abundanceRef,
+      conditionColumnRef,
+      gateColumnRef,
       // Position becomes the rank, contiguous over the gates the list holds — a gap would
       // move every score, since ranks enter the weighted mean as numbers. The key set also
       // tells the computation which gates the run covers.
       //
       // Canonicalised so an edit with no effect produces the same bytes and does not fire
-      // the staleness gate.
+      // the staleness gate. Keyed by the gate's column value id, which the workflow turns back
+      // into the gate value.
       gateRanks: Object.fromEntries(data.gateOrder.map((gate, index) => [gate, index + 1])),
       excludedConditions: [...data.excludedConditions].sort(),
       // `undefined` rather than a value: the workflow omits the field and the computation
@@ -275,27 +184,7 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
   // ---------------------------------------------------------------------------
 
   /** The anchor. Matched on axis count plus the two abundance annotations, never on a name. */
-  .output("abundanceOptions", (ctx) => ctx.resultPool.getOptions(isAbundanceAnchor))
-
-  /** Every per-sample metadata column in the anchor's context — one query, four consumers. */
-  .output("metadataColumns", (ctx) => {
-    const anchor = ctx.data.abundanceRef;
-    if (!anchor) return undefined;
-
-    const anchorCtx = ctx.resultPool.resolveAnchorCtx({ main: anchor });
-    if (!anchorCtx) return undefined;
-
-    const columns = ctx.resultPool.getAnchoredPColumns({ main: anchor }, [metadataSelector]);
-    if (!columns) return undefined;
-
-    return columns.map((column) => ({
-      // From the column's own spec, so id and objectId are correlated by construction rather
-      // than by list position.
-      value: anchorCtx.deriveS(column.spec),
-      objectId: column.id,
-      label: column.spec.annotations?.[Annotation.Label] ?? column.spec.name,
-    }));
-  })
+  .output("abundanceOptions", (ctx) => getAbundanceOptions(ctx))
 
   /**
    * Whether the selected dataset is at the nucleotide grain. The one fact the drawer needs that
@@ -303,57 +192,36 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
    * `settingsIssues` — that choice is not a broken run, just an empty baseline.
    */
   .output("datasetIsNucleotide", (ctx) => {
-    const anchor = ctx.data.abundanceRef;
-    if (!anchor) return undefined;
-
-    const spec = ctx.resultPool.getPColumnSpecByRef(anchor);
-    // Axis 1 is the variant axis; `isAbundanceAnchor` admits only two-axis columns.
-    const alphabet = spec?.axesSpec?.[1]?.domain?.[AlphabetDomain];
-    return alphabet === undefined ? undefined : alphabet === Alphabet.Nucleotide;
+    const abundanceRef = ctx.data.abundanceRef;
+    if (abundanceRef === undefined) return undefined;
+    return isNucleotideDataset(ctx, abundanceRef);
   })
 
   /** The pickers, each offering what the other two roles do not already hold. */
-  .output("conditionOptions", (ctx) => narrowTo(ctx, "conditionColumnRef"))
-  .output("gateOptions", (ctx) => narrowTo(ctx, "gateColumnRef"))
-  .output("sortFractionOptions", (ctx) => narrowTo(ctx, "sortFractionColumnRef"))
+  .output("conditionOptions", (ctx) => roleOptions(ctx, "conditionColumnRef"))
+  .output("gateOptions", (ctx) => roleOptions(ctx, "gateColumnRef"))
+  .output("sortFractionOptions", (ctx) => roleOptions(ctx, "sortFractionColumnRef"))
 
   // ---------------------------------------------------------------------------
-  // The two controls that need a picked column's values rather than its spec.
+  // The controls that need a picked column's values rather than its spec.
   // ---------------------------------------------------------------------------
 
   /**
-   * EVERY metadata column, not just the picked ones. The UI snapshots values in the same
-   * gesture as the pick, so they must be in hand before it; publishing only picked columns
-   * lags by a round trip and the gate-order control never appears.
+   * The values of every metadata column on offer, so the gate order can be seeded in the same
+   * gesture as the gate pick, and the picked gates, input and excluded conditions be shown by
+   * the values they pick.
    */
-  .output("metadataColumnsPframe", (ctx) => {
-    const anchor = ctx.data.abundanceRef;
-    if (!anchor) return undefined;
-
-    const columns = ctx.resultPool.getAnchoredPColumns({ main: anchor }, [metadataSelector]);
-    if (!columns || columns.length === 0) return undefined;
-
-    return ctx.createPFrame(columns as PColumn<PColumnValues>[]);
+  .output("metadataValues", (ctx) => {
+    const abundanceRef = ctx.data.abundanceRef;
+    if (abundanceRef === undefined) return undefined;
+    return getMetadataValues(ctx, abundanceRef, ctx.data);
   })
 
-  /** The sample label column, for resolving the pooling report's `PlId`s to names. */
-  .output("sampleLabelPframe", (ctx) => {
-    const anchor = ctx.data.abundanceRef;
-    if (!anchor) return undefined;
-
-    const columns = ctx.resultPool.getAnchoredPColumns({ main: anchor }, [sampleLabelSelector]);
-    if (!columns || columns.length === 0) return undefined;
-
-    return ctx.createPFrame(columns as PColumn<PColumnValues>[]);
-  })
-
-  /** The `PObjectId` for reading that column out of the frame above. */
-  .output("sampleLabelColumnId", (ctx) => {
-    const anchor = ctx.data.abundanceRef;
-    if (!anchor) return undefined;
-
-    const columns = ctx.resultPool.getAnchoredPColumns({ main: anchor }, [sampleLabelSelector]);
-    return columns?.[0]?.id;
+  /** Sample names by sample id, for the pooling report's sample ids. */
+  .output("sampleLabels", (ctx) => {
+    const abundanceRef = ctx.data.abundanceRef;
+    if (abundanceRef === undefined) return undefined;
+    return getSampleLabels(ctx, abundanceRef);
   })
 
   // ---------------------------------------------------------------------------
@@ -382,17 +250,12 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
 
   /** Which levels the run produced, so the UI shows one table or two. */
   .output("scoreLevels", (ctx) => {
-    const own = ctx.outputs?.resolve("scoresPf")?.getPColumns();
+    const own = getOutputColumns(ctx, ctx.outputs?.resolve("scoresPf"))?.getColumns();
     if (!own) return undefined;
-    const levels = new Set<string>();
-    for (const column of own) {
-      const alphabet = column.spec.domain?.[AlphabetDomain];
-      if (alphabet !== undefined) levels.add(alphabet);
-    }
-    return [...levels].sort();
+    return scoreLevelsOf(own);
   })
   .output("distributionConditions", (ctx) => {
-    const columns = ctx.outputs?.resolve("distributionPf")?.getPColumns();
+    const columns = getOutputColumns(ctx, ctx.outputs?.resolve("distributionPf"))?.getColumns();
     if (!columns) return undefined;
     return distributionConditionsOf(columns);
   })
@@ -405,16 +268,16 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
    * axis's label column, without which charts draw raw keys.
    */
   .outputWithStatus("distributionPf", (ctx) => {
-    const columns = ctx.outputs?.resolve("distributionPf")?.getPColumns();
+    const columns = getOutputColumns(ctx, ctx.outputs?.resolve("distributionPf"))?.getColumns();
     if (!columns) return undefined;
-    return createPFrameForGraphs(ctx, columns);
+    return createPFrameForGraphs(ctx, toPColumns(columns));
   })
 
   /** The same columns as id+spec pairs, so a page binds to real specs instead of names. */
   .output("distributionPfCols", (ctx) => {
-    const columns = ctx.outputs?.resolve("distributionPf")?.getPColumns();
+    const columns = getOutputColumns(ctx, ctx.outputs?.resolve("distributionPf"))?.getColumns();
     if (!columns) return undefined;
-    return columns.map((column) => ({ id: column.id, spec: column.spec }));
+    return columns.map((column) => ({ id: column.id, spec: column.getSpec() }));
   })
 
   /** The not-ready-safe accessor is required: plain `getDataAsJson` throws mid-run. */
@@ -460,19 +323,13 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
   /** Exposed so the UI can show it as the subtitle field's placeholder. */
   .output("defaultBlockLabel", (ctx) => deriveBlockLabel(ctx.data))
 
-  /**
-   * The inverse of the data model's `init`, field for field. Mandatory — `done()` throws
-   * without it. The value snapshots are included: without them a templated gate ladder arrives
-   * unrunnable, and making it runnable destroys the ladder.
-   */
+  /** The inverse of the data model's `init`, field for field. Mandatory — `done()` throws without it. */
   .templateParams((data) => ({
     conditionColumnRef: data.conditionColumnRef,
     gateColumnRef: data.gateColumnRef,
     sortFractionColumnRef: data.sortFractionColumnRef,
     gateOrder: data.gateOrder,
-    gateValues: data.gateValues,
     gateColumnLabel: data.gateColumnLabel,
-    conditionValues: data.conditionValues,
   }))
 
   /** Constant. What an instance is configured for belongs in the subtitle. */
@@ -489,14 +346,12 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
    * back as a space — `CD4+` being an ordinary condition value.
    */
   .sections((ctx) => {
-    const columns = ctx.outputs?.resolve("distributionPf")?.getPColumns();
+    const columns = getOutputColumns(ctx, ctx.outputs?.resolve("distributionPf"))?.getColumns();
 
     // Each entry must stay an `as const` literal with no annotation on the array: the route's
     // query type is derived from the href's template literal type.
-    const levels = ctx.outputs?.resolve("scoresPf")?.getPColumns();
-    const hasNt = (levels ?? []).some(
-      (column) => column.spec.domain?.[AlphabetDomain] === Alphabet.Nucleotide,
-    );
+    const levels = getOutputColumns(ctx, ctx.outputs?.resolve("scoresPf"))?.getColumns();
+    const hasNt = scoreLevelsOf(levels ?? []).includes(Alphabet.Nucleotide);
 
     return [
       // Must match the page's own title.
@@ -523,65 +378,126 @@ export function deriveBlockLabel(data: BlockData): string {
 
   // Every gate, not just the ends: a reordering of the middle is exactly the change that
   // silently moves every score.
-  return `${data.gateColumnLabel}: ${ordered.join("-")}`;
-}
-
-/**
- * The metadata options minus what the other two roles hold. The distinctness refusal stays in
- * `args`; this only keeps the user away from it. A role never hides its own current pick, or
- * the control renders empty.
- */
-function narrowTo(
-  ctx: {
-    data: BlockData;
-    resultPool: unknown;
-    outputs?: unknown;
-  } & { data: BlockData },
-  role: "conditionColumnRef" | "gateColumnRef" | "sortFractionColumnRef",
-): { label: string; value: SUniversalPColumnId }[] | undefined {
-  const all = metadataColumnsOf(ctx);
-  if (!all) return undefined;
-
-  const roles = ["conditionColumnRef", "gateColumnRef", "sortFractionColumnRef"] as const;
-  const taken = new Set(
-    roles
-      .filter((other) => other !== role)
-      .map((other) => ctx.data[other])
-      .filter((ref): ref is SUniversalPColumnId => ref !== undefined),
-  );
-
-  return all
-    .filter((column) => !taken.has(column.value))
-    .map((column) => ({ label: column.label, value: column.value }));
-}
-
-/** The same query `metadataColumns` runs; the runtime memoizes it across both. */
-function metadataColumnsOf(ctx: {
-  data: BlockData;
-  resultPool: unknown;
-}): { value: SUniversalPColumnId; label: string }[] | undefined {
-  const anchor = ctx.data.abundanceRef;
-  if (!anchor) return undefined;
-
-  const pool = ctx.resultPool as {
-    resolveAnchorCtx: (
-      a: Record<string, unknown>,
-    ) => { deriveS: (spec: unknown) => SUniversalPColumnId } | undefined;
-    getAnchoredPColumns: (
-      a: Record<string, unknown>,
-      s: unknown[],
-    ) => { id: string; spec: { name: string; annotations?: Record<string, string> } }[] | undefined;
-  };
-
-  const anchorCtx = pool.resolveAnchorCtx({ main: anchor });
-  if (!anchorCtx) return undefined;
-  const columns = pool.getAnchoredPColumns({ main: anchor }, [metadataSelector]);
-  if (!columns) return undefined;
-
-  return columns.map((column) => ({
-    value: anchorCtx.deriveS(column.spec),
-    label: column.spec.annotations?.[Annotation.Label] ?? column.spec.name,
-  }));
+  return `${data.gateColumnLabel}: ${ordered.map(columnValueLabel).join("-")}`;
 }
 
 export type BlockOutputs = InferOutputsType<typeof platforma>;
+
+// Internals
+
+/** The metadata options a role picker offers. */
+function roleOptions(
+  ctx: BlockRenderCtx<BlockArgs, BlockData>,
+  role: MetadataRole,
+): ColumnPickerOption[] | undefined {
+  const abundanceRef = ctx.data.abundanceRef;
+  if (abundanceRef === undefined) return undefined;
+  const options = getMetadataOptions(ctx, abundanceRef);
+  if (options === undefined) return undefined;
+  return narrowToRole(options, ctx.data, role);
+}
+
+/** The grains the run scored at, read off the alphabet domain of its score columns. */
+function scoreLevelsOf(columns: readonly ColumnRecipe[]): string[] {
+  const levels = new Set<string>();
+  for (const column of columns) {
+    const alphabet = column.getSpec().domain?.[AlphabetDomain];
+    if (alphabet !== undefined) levels.add(alphabet);
+  }
+  return [...levels].sort();
+}
+
+/** Conditions read off the domain key, sorted — they carry no order of their own. */
+function distributionConditionsOf(columns: readonly ColumnRecipe[]): string[] {
+  const conditions = new Set<string>();
+  for (const column of columns) {
+    const condition = column.getSpec().domain?.[FacsBin.ConditionDomain];
+    if (condition !== undefined) conditions.add(condition);
+  }
+  return [...conditions].sort();
+}
+
+/**
+ * One scores table for one grain. A nucleotide run emits two column families on two axes, told
+ * apart by the `pl7.app/alphabet` domain. `undefined` where the run produced none.
+ */
+function buildScoresTable(ctx: BlockRenderCtx<BlockArgs, BlockData>, alphabet: string) {
+  const all = getOutputColumns(ctx, ctx.outputs?.resolve("scoresPf"));
+  if (!all) return undefined;
+  // The alphabet is the only thing separating the two families: they share every name and
+  // condition domain, and mixing them joins protein scores to nothing.
+  const own = all
+    .filter({ include: { domain: { [AlphabetDomain]: [exact(alphabet)] } } })
+    .getColumns()
+    .map((column) => ({ column, spec: column.getSpec() }));
+  if (own.length === 0) return undefined;
+
+  // Unordered gates produce no `gateRankMean`, so the enrichment carries the anchor there.
+  // Both are keyed on the variant axes, so the key shape below is the same either way.
+  const pickAnchor = (name: string) =>
+    own
+      .filter((column) => column.spec.name === name)
+      .sort((a, b) =>
+        (
+          (a.spec.domain?.[FacsBin.ConditionDomain] ?? "") +
+          "\0" +
+          (a.spec.domain?.[FacsBin.GateDomain] ?? "")
+        ).localeCompare(
+          (b.spec.domain?.[FacsBin.ConditionDomain] ?? "") +
+            "\0" +
+            (b.spec.domain?.[FacsBin.GateDomain] ?? ""),
+        ),
+      )[0];
+  const anchor = pickAnchor(FacsBin.GateRankMean) ?? pickAnchor(FacsBin.GateEnrichment);
+  if (!anchor) return undefined;
+
+  // Primary columns, so they are always shown and never compete with a pool namesake.
+  //
+  // Filtered to the anchor's own key shape: `scoresPf` also carries the per-position baseline
+  // on `[parentId, position]`, and passing that in fails the whole table with
+  // `discoverColumns failed`. Compared on axis names, so a new differently-keyed column does
+  // not need this list updated.
+  const anchorKey = anchor.spec.axesSpec.map((axis) => axis.name).join("\0");
+  const primaryColumns = own
+    .filter((column) => column.spec.axesSpec.map((axis) => axis.name).join("\0") === anchorKey)
+    .map(({ column }) => column);
+
+  // Everything else the variant axis reaches.
+  //
+  // The WHOLE `pl7.app/facsBin/` namespace is excluded, this block's own included. A second
+  // sort-seq block's columns are identical in everything discovery matches on, and a selector
+  // can require a domain value but cannot refuse one — so there is no selector admitting ours
+  // and refusing a sibling's. This also drops the duplicate our own `exports.pf` creates.
+  const { primary, secondary } = discoverTableColumnSnaphots(ctx, {
+    anchors: { main: anchor.spec },
+    // Strict axis equality. "related" reaches every column the variant axis participates in,
+    // giving a row per variant per position per gate.
+    selector: {
+      mode: "exact",
+      exclude: [{ name: [{ type: "regex", value: "^pl7\\.app/facsBin/.*$" }] }],
+    },
+  });
+
+  return createPlDataTableV3(ctx, {
+    primaryColumns,
+    columns: [...primary, ...secondary],
+    tableState:
+      alphabet === Alphabet.Nucleotide ? ctx.data.ntResultsTableState : ctx.data.resultsTableState,
+    displayOptions: {
+      /**
+       * First match wins, and an unmatched column keeps its own annotation — upstream sets
+       * `default` on nearly everything, so the catch-all last is required.
+       *
+       * `optional` rather than `hidden`: they stay one click away in the column picker.
+       */
+      visibility: [
+        { match: { name: exact(FacsBin.GateRankMean) }, visibility: "default" },
+        { match: { name: exact(FacsBin.BinScore) }, visibility: "default" },
+        { match: { name: exact(FacsBin.GateEnrichment) }, visibility: "default" },
+        { match: { name: exact(PColumnName.VariantLabel) }, visibility: "default" },
+        { match: { name: exact(PColumnName.Mutations) }, visibility: "default" },
+        { match: { name: ".*" }, visibility: "optional" },
+      ],
+    },
+  });
+}

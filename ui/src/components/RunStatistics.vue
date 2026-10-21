@@ -5,15 +5,13 @@
  * `@click.stop` is required: the dialog closes on an outside click, and the opening click would
  * bubble up and be read as outside. Open state is a local ref — in `data` it would be shared.
  */
-import { getSingleColumnData, type PObjectId } from "@platforma-sdk/model";
 import {
   PlAgOverlayLoading,
   PlAlert,
   PlBtnGhost,
   PlDialogModal,
   PlLogView,
-  PlMaskIcon24,
-  useWatchFetch,
+  PlIcon24,
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
@@ -76,32 +74,9 @@ const inputDepths = computed(() => {
   }));
 });
 
-/** `sampleId` -> sample name. One axis, so `axesData[0]` lines up with `data` by position. */
-const sampleLabels = useWatchFetch(
-  () => ({
-    pframe: app.model.outputs.sampleLabelPframe,
-    columnId: app.model.outputs.sampleLabelColumnId,
-  }),
-  async ({ pframe, columnId }) => {
-    const out: Record<string, string> = {};
-    if (!pframe || !columnId) return out;
-
-    const column = await getSingleColumnData(pframe, columnId as PObjectId);
-    const ids = Object.values(column?.axesData ?? {})[0] ?? [];
-    const labels = column?.data ?? [];
-    for (const [index, id] of ids.entries()) {
-      const label = labels[index];
-      if (id !== null && id !== undefined && label !== null && label !== undefined) {
-        out[String(id)] = String(label);
-      }
-    }
-    return out;
-  },
-);
-
 /** The sample's name, falling back to the raw id. */
 function labelFor(sampleId: string): string {
-  return sampleLabels.value?.[sampleId] ?? sampleId;
+  return app.model.outputs.sampleLabels?.[sampleId] ?? sampleId;
 }
 
 /**
@@ -163,7 +138,7 @@ function binScoreCell(entry: {
   <PlBtnGhost @click.stop="isOpen = true">
     Statistics
     <template #append>
-      <PlMaskIcon24 name="statistics" />
+      <PlIcon24 name="statistics" />
     </template>
   </PlBtnGhost>
 

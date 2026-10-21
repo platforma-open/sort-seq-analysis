@@ -21,6 +21,9 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
 render := import("@platforma-sdk/workflow-tengo:render")
 canonical := import("@platforma-sdk/workflow-tengo:canonical")
+columnValue := import("@platforma-sdk/workflow-tengo:workflow.column-value")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+json := import("json")
 
 scoreSw := assets.importSoftware("@platforma-open/milaboratories.sort-seq-analysis.software:main")
 buildColumnsTpl := assets.importTemplate(":build-columns")
@@ -42,18 +45,34 @@ DISTRIBUTION_FILE_REGEX := "^dist_.*\\.tsv$"
 // `score_` name.
 BASELINE_FILE_REGEX := "^baseline_.*\\.tsv$"
 
+// The ref a result-pool column id names: the block and output it was taken from.
+columnIdToRef := func(id) {
+	ref := json.decode(id)
+	if !is_map(ref) || ref.__isRef != true {
+		ll.panic("expected a result-pool column id, got %v", id)
+	}
+	return ref
+}
+
+// The plain value a column value id carries, as text: the computation compares gate and
+// condition values with the cells of the reads table, which carries them as text, numeric
+// values too.
+pickedValue := func(id) {
+	return string(columnValue.valueOf(id))
+}
+
 wf.prepare(func(args) {
 	bb := wf.createPBundleBuilder()
 	bb.ignoreMissingDomains()
 
 	// The anchor: every other input resolves against it, so columns cannot be mixed across runs.
-	//
-	// It MUST be named "main" — the model's stored anchored ids embed `{"anchor":"main"}`, and
-	// any other name fails with "anchor 'main' not found". Part of the id's contract.
-	bb.addAnchor("main", args.abundanceRef)
+	// It arrives as a result-pool column id; the anchored queries below bind their axes to it
+	// by the name "main".
+	bb.addAnchor("main", columnIdToRef(args.abundanceRef))
 
 	// One predicate, one option list, three independent picks: no spec predicate can tell which
-	// role a metadata column plays, so the user assigns them.
+	// role a metadata column plays, so the user assigns them. Each arrives as a result-pool
+	// column id.
 	bb.addSingle(args.conditionColumnRef, "condition")
 	bb.addSingle(args.gateColumnRef, "gate")
 	if !is_undefined(args.sortFractionColumnRef) {
@@ -115,6 +134,18 @@ wf.prepare(func(args) {
 wf.body(func(args) {
 	blockId := wf.blockId().getDataAsJson()
 	columns := args.columns
+
+	// Picked gates, excluded conditions and the input arrive as column value ids; the
+	// computation takes the plain values they carry. `gateRanks` is keyed by the ids.
+	gateRanks := {}
+	for id, rank in args.gateRanks {
+		gateRanks[pickedValue(id)] = rank
+	}
+	excludedConditions := []
+	for id in args.excludedConditions {
+		excludedConditions = append(excludedConditions, pickedValue(id))
+	}
+	inputGate := is_undefined(args.inputGate) ? undefined : pickedValue(args.inputGate)
 
 	abundanceSpec := columns.getSpec("main")
 	sampleAxisSpec := abundanceSpec.axesSpec[0]
@@ -258,8 +289,8 @@ wf.body(func(args) {
 
 	// Omitted rather than nulled; the computation reads an absent key as the behaviour.
 	paramsPayload := {
-		gateRanks: args.gateRanks,
-		excludedConditions: args.excludedConditions
+		gateRanks: gateRanks,
+		excludedConditions: excludedConditions
 	}
 	if !is_undefined(args.readFloor) {
 		paramsPayload.readFloor = args.readFloor
@@ -268,8 +299,8 @@ wf.body(func(args) {
 		paramsPayload.sortFractionColumn = SORT_FRACTION_HEADER
 	}
 	// Naming an input is what asks for the enrichment. There is no mode to carry.
-	if !is_undefined(args.inputGate) {
-		paramsPayload.inputGate = args.inputGate
+	if !is_undefined(inputGate) {
+		paramsPayload.inputGate = inputGate
 	}
 	// Absent means ordered, which is every document written before the flag existed.
 	if !is_undefined(args.gatesOrdered) {

@@ -7,7 +7,8 @@
  * annotations and never names an axis.
  */
 
-import type { AnchoredPColumnSelector, PColumnSpec, PObjectSpec } from "@platforma-sdk/model";
+import type { AnchoredPColumnSelector, RelaxedColumnSelector } from "@platforma-sdk/model";
+import { exact } from "./column_access";
 
 /** Annotation keys this block reads on upstream columns. */
 export const Annotation = {
@@ -84,14 +85,6 @@ export const ReferenceMode = {
 export const AlphabetDomain = "pl7.app/alphabet";
 export const Alphabet = { Nucleotide: "nucleotide", AminoAcid: "aminoacid" } as const;
 
-function isPColumnSpec(spec: PObjectSpec): spec is PColumnSpec {
-  return spec.kind === "PColumn";
-}
-
-function annotation(spec: PColumnSpec, key: string): string | undefined {
-  return spec.annotations?.[key];
-}
-
 /**
  * The anchor: per-sample abundance on the variant grain.
  *
@@ -99,37 +92,36 @@ function annotation(spec: PColumnSpec, key: string): string | undefined {
  * normalized, and three more carry the abundance marker without the primary one — admitting
  * those computes a bin score over aggregated totals with output of ordinary shape.
  *
- * Two axes by COUNT, not name — see the file header.
+ * Exactly two axes, matched by COUNT, not name — see the file header.
  */
-export function isAbundanceAnchor(spec: PObjectSpec): boolean {
-  if (!isPColumnSpec(spec)) return false;
-  if (spec.axesSpec.length !== 2) return false;
-  return (
-    annotation(spec, Annotation.AbundanceIsPrimary) === "true" &&
-    annotation(spec, Annotation.AbundanceNormalized) === "false"
-  );
-}
+export const abundanceSelector: RelaxedColumnSelector = {
+  axes: [{}, {}],
+  partialAxesMatch: false,
+  annotations: {
+    [Annotation.AbundanceIsPrimary]: [exact("true")],
+    [Annotation.AbundanceNormalized]: [exact("false")],
+  },
+};
 
 /**
- * Per-sample metadata — the option list the three roles are picked from, so it is expected to
- * resolve to many. Which role a column plays is the user's pick; no spec predicate can tell.
+ * Per-sample metadata on the dataset's sample axis — the option list the three roles are picked
+ * from, so it is expected to resolve to many. Which role a column plays is the user's pick; no
+ * spec predicate can tell.
  *
  * `pl7.app/metadata` is the column's NAME, not an annotation. Matching it as an annotation
  * matches nothing silently: the list comes back empty and the pickers look broken.
  */
-export const metadataSelector: AnchoredPColumnSelector = {
-  axes: [{ anchor: "main", idx: 0 }],
-  name: PColumnName.Metadata,
+export const metadataSelector: RelaxedColumnSelector = {
+  name: [exact(PColumnName.Metadata)],
 };
 
 /**
  * The sample axis's label column. `pl7.app/isLabel` is required alongside the name, which the
  * variant label column shares.
  */
-export const sampleLabelSelector: AnchoredPColumnSelector = {
-  axes: [{ anchor: "main", idx: 0 }],
-  name: PColumnName.SampleLabel,
-  annotations: { "pl7.app/isLabel": "true" },
+export const sampleLabelSelector: RelaxedColumnSelector = {
+  name: [exact(PColumnName.SampleLabel)],
+  annotations: { "pl7.app/isLabel": [exact("true")] },
 };
 
 /**
