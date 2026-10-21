@@ -45,7 +45,9 @@ export const blockDataModel = new DataModelBuilder({ kind })
     gateColumnRef: params?.gateColumnRef,
     sortFractionColumnRef: params?.sortFractionColumnRef,
     gateOrder: params?.gateOrder ?? [],
+    gateValues: params?.gateValues ?? [],
     gateColumnLabel: params?.gateColumnLabel,
+    conditionValues: params?.conditionValues ?? [],
 
     // Not init params — see the kind. The two facts and the baseline are absent rather than
     // defaulted: an absent input means no enrichment, and an absent order flag means ordered.
@@ -64,22 +66,25 @@ export const blockDataModel = new DataModelBuilder({ kind })
  * were picked by ids anchored against the dataset and the gates, excluded conditions and input
  * gate stored as plain values; neither names the block that produced the metadata, so they
  * cannot become column ids and column value ids and are dropped, to be picked again. The
- * snapshots of the gate and condition columns' values are dropped too: the model reads the
- * values of the picked columns itself.
+ * snapshots of the gate and condition columns' values were plain values too and go with their
+ * columns; the next pick of a column writes its snapshot again.
  */
 function toColumnIds(data: BlockDataV2): BlockData {
-  const { gateValues: _gateValues, conditionValues: _conditionValues, ...kept } = data;
   const column = (stored: string | undefined) => (isColumnUniversalId(stored) ? stored : undefined);
   const value = (picked: string | undefined) => (isColumnValueId(picked) ? picked : undefined);
+  const conditionColumnRef = column(data.conditionColumnRef);
   const gateColumnRef = column(data.gateColumnRef);
   return {
-    ...kept,
+    ...data,
     abundanceRef: data.abundanceRef === undefined ? undefined : toColumnId(data.abundanceRef),
-    conditionColumnRef: column(data.conditionColumnRef),
+    conditionColumnRef,
     gateColumnRef,
     sortFractionColumnRef: column(data.sortFractionColumnRef),
-    // The label names the gate column, so it goes with it.
+    // The label and the snapshots describe their column, so they go with it.
     gateColumnLabel: gateColumnRef === undefined ? undefined : data.gateColumnLabel,
+    gateValues: gateColumnRef === undefined ? [] : data.gateValues.filter(isColumnValueId),
+    conditionValues:
+      conditionColumnRef === undefined ? [] : data.conditionValues.filter(isColumnValueId),
     gateOrder: data.gateOrder.filter(isColumnValueId),
     excludedConditions: data.excludedConditions.filter(isColumnValueId),
     inputGate: value(data.inputGate),

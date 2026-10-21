@@ -61,8 +61,8 @@ export function narrowToRole(
  * columns, each value a column value id naming its column, and through it the block that
  * produced the value.
  *
- * Every offered column rather than the picked ones: the gate order is seeded from the gate
- * column's values in the same gesture as the pick, so they must be in hand before it.
+ * Every offered column rather than the picked ones: a column's values are snapshotted, and the
+ * gate order seeded, in the same gesture as the pick, so they must be in hand before it.
  *
  * `undefined` while the metadata options are. A column whose values cannot be read now — still
  * resolving, not computed, gone, or not stored inline — offers no values, so its picks show as

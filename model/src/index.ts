@@ -53,17 +53,21 @@ export function settingsIssues(data: BlockData): string[] {
   }
 
   // The order is a selection, so coverage is deliberately NOT checked: a gate column carrying
-  // an input or a specificity arm is the ordinary case. Only non-emptiness and that every gate
-  // was picked from the gate column. A gate the column no longer carries is shown as not
-  // available in the drawer; `data` does not hold the column's values, so it is not refused
-  // here, and neither is excluding every condition.
+  // an input or a specificity arm is the ordinary case. Only non-emptiness and that it names
+  // nothing outside the column.
   //
   // Guarded on the pick so a fresh block does not get two complaints for one unmade choice.
   const gateColumn = data.gateColumnRef;
   if (gateColumn !== undefined) {
-    if (data.gateOrder.length === 0) {
+    if (data.gateValues.length === 0) {
+      issues.push("The gate column has no values to rank");
+    } else if (data.gateOrder.length === 0) {
+      issues.push("Keep at least one gate in the order — every gate has been removed");
+    }
+    const unknown = data.gateOrder.filter((value) => !data.gateValues.includes(value));
+    if (unknown.length > 0) {
       issues.push(
-        "Keep at least one gate in the order — the gate column has none, or every gate has been removed",
+        `Ordered value(s) the gate column does not carry: ${unknown.map(columnValueLabel).join(", ")}`,
       );
     }
     const foreign = [...data.gateOrder, ...(data.inputGate === undefined ? [] : [data.inputGate])]
@@ -72,6 +76,15 @@ export function settingsIssues(data: BlockData): string[] {
     if (foreign.length > 0) {
       issues.push(`Gate value(s) picked from another column: ${foreign.join(", ")}`);
     }
+  }
+
+  // Refused rather than producing nothing: an empty result is indistinguishable from a
+  // failed run.
+  if (
+    data.conditionValues.length > 0 &&
+    data.conditionValues.every((value) => data.excludedConditions.includes(value))
+  ) {
+    issues.push("At least one condition must remain — every value is currently excluded");
   }
 
   const conditionColumn = data.conditionColumnRef;
@@ -101,6 +114,10 @@ export function settingsIssues(data: BlockData): string[] {
       // reordering after the pick, so the option list alone is not enough.
       issues.push(
         `The input '${columnValueLabel(data.inputGate)}' is also a ranked gate — remove it from the gate order`,
+      );
+    } else if (data.gateValues.length > 0 && !data.gateValues.includes(data.inputGate)) {
+      issues.push(
+        `The gate column does not carry the input value '${columnValueLabel(data.inputGate)}'`,
       );
     }
   }
@@ -207,9 +224,9 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
   // ---------------------------------------------------------------------------
 
   /**
-   * The values of every metadata column on offer, so the gate order can be seeded in the same
-   * gesture as the gate pick, and the picked gates, input and excluded conditions be shown by
-   * the values they pick.
+   * The values of every metadata column on offer, so a column's values can be snapshotted and
+   * the gate order seeded in the same gesture as the column pick, and the picked gates, input and
+   * excluded conditions be shown by the values they pick.
    */
   .output("metadataValues", (ctx) => {
     const abundanceRef = ctx.data.abundanceRef;
@@ -323,13 +340,19 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
   /** Exposed so the UI can show it as the subtitle field's placeholder. */
   .output("defaultBlockLabel", (ctx) => deriveBlockLabel(ctx.data))
 
-  /** The inverse of the data model's `init`, field for field. Mandatory — `done()` throws without it. */
+  /**
+   * The inverse of the data model's `init`, field for field. Mandatory — `done()` throws
+   * without it. The value snapshots are included: without them a templated gate ladder arrives
+   * unrunnable, and making it runnable destroys the ladder.
+   */
   .templateParams((data) => ({
     conditionColumnRef: data.conditionColumnRef,
     gateColumnRef: data.gateColumnRef,
     sortFractionColumnRef: data.sortFractionColumnRef,
     gateOrder: data.gateOrder,
+    gateValues: data.gateValues,
     gateColumnLabel: data.gateColumnLabel,
+    conditionValues: data.conditionValues,
   }))
 
   /** Constant. What an instance is configured for belongs in the subtitle. */

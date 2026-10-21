@@ -3,8 +3,9 @@
  * One control per argument. Two things are easy to "fix" wrongly:
  *
  * 1. The read-count floor is clearable — cleared IS the answer, and the normal first run.
- * 2. The gate order is seeded on the user's gesture, never by a watcher: a watcher on an
- *    output writing to `data` is the hairpin, and two clients would race.
+ * 2. Column values are snapshotted and the gate order seeded on the user's gesture, never by a
+ *    watcher: a watcher on an output writing to `data` is the hairpin, and two clients would
+ *    race.
  *
  * Picked gates, the input and excluded conditions are column value ids of their columns. One no
  * longer among the column's values stays picked and is shown as not available, with the reason
@@ -12,6 +13,7 @@
  */
 import { BASELINE_AVAILABLE } from "@platforma-open/milaboratories.sort-seq-analysis.model";
 import type { ColumnUniversalId, ColumnValueId, ColumnValueOption } from "@platforma-sdk/model";
+import { columnValueLabel } from "@platforma-sdk/model";
 import {
   PlAccordion,
   PlAccordionSection,
@@ -55,16 +57,6 @@ function valuesOf(column: ColumnUniversalId | undefined): ColumnValueId[] {
 
 const conditionValueOptions = computed(() => valueOptionsOf(app.model.data.conditionColumnRef));
 
-/**
- * Every condition excluded leaves nothing to score: the run would produce no results, which
- * reads like a failed run.
- */
-const everyConditionExcluded = computed(() => {
-  const options = conditionValueOptions.value;
-  if (options === undefined || options.length === 0) return false;
-  return options.every((option) => app.model.data.excludedConditions.includes(option.value));
-});
-
 const gateValueOptions = computed(() => valueOptionsOf(app.model.data.gateColumnRef));
 
 /** `undefined` means ordered, which is the ordinary case and every block made before this. */
@@ -75,35 +67,34 @@ const gatesOrdered = computed({
   },
 });
 
+const gateValues = computed(() => app.model.data.gateValues);
+
 /**
  * The gate values that are NOT rungs — the reference cannot also be a gate the run ranks. So
  * the control offers what the gate-order list has had removed.
  */
 const inputGateOptions = computed(() =>
-  gateValueOptions.value?.filter((option) => !app.model.data.gateOrder.includes(option.value)),
+  gateValues.value
+    .filter((value) => !app.model.data.gateOrder.includes(value))
+    .map((value) => ({ value, label: columnValueLabel(value) })),
 );
 
 /**
  * What `setGateColumn` seeds, minus the input gate — the input can never be a ranked gate, so
- * removing it is not a modification to offer undoing. `undefined` while the gate column's values
- * are not known, so a reset cannot wipe the order before they arrive.
+ * removing it is not a modification to offer undoing.
  */
 const defaultGateOrder = computed(() =>
-  gateValueOptions.value
-    ?.map((option) => option.value)
-    .filter((value) => value !== app.model.data.inputGate),
+  gateValues.value.filter((value) => value !== app.model.data.inputGate),
 );
 
 const gateOrderModified = computed(() => {
   const current = app.model.data.gateOrder;
   const base = defaultGateOrder.value;
-  if (base === undefined) return false;
   return current.length !== base.length || current.some((value, i) => value !== base[i]);
 });
 
 function resetGateOrder() {
-  const base = defaultGateOrder.value;
-  if (base !== undefined) app.model.data.gateOrder = [...base];
+  app.model.data.gateOrder = [...defaultGateOrder.value];
 }
 
 /** `undefined` before a dataset is picked, so an unknown grain never hides a valid option. */
@@ -143,6 +134,8 @@ function setAbundance(ref: ColumnUniversalId | undefined) {
   app.model.data.conditionColumnRef = undefined;
   app.model.data.gateColumnRef = undefined;
   app.model.data.sortFractionColumnRef = undefined;
+  app.model.data.conditionValues = [];
+  app.model.data.gateValues = [];
   app.model.data.gateColumnLabel = undefined;
   app.model.data.gateOrder = [];
   app.model.data.excludedConditions = [];
@@ -155,13 +148,16 @@ function setAbundance(ref: ColumnUniversalId | undefined) {
 }
 
 function setConditionColumn(ref: ColumnUniversalId | undefined) {
-  // The exclusions are values of the old column.
+  // Ref and snapshot in one gesture. The snapshot may go stale; re-picking refreshes it.
   app.model.data.conditionColumnRef = ref;
+  app.model.data.conditionValues = valuesOf(ref);
+  // The exclusions are values of the old column.
   app.model.data.excludedConditions = [];
 }
 
 function setGateColumn(ref: ColumnUniversalId | undefined) {
   app.model.data.gateColumnRef = ref;
+  app.model.data.gateValues = valuesOf(ref);
   // The label too: only the option list knows it, and the subtitle derives from `data` alone.
   app.model.data.gateColumnLabel = app.model.outputs.gateOptions?.find(
     (option) => option.value === ref,
@@ -280,10 +276,6 @@ function setGateColumn(ref: ColumnUniversalId | undefined) {
             Levels to leave out, such as a failed sort; excluded levels produce no results.
           </template>
         </PlDropdownMulti>
-
-        <PlAlert v-if="everyConditionExcluded" type="warn">
-          Every level is excluded, so the run would produce no results. Keep at least one.
-        </PlAlert>
       </PlAccordionSection>
     </PlAccordion>
 

@@ -92,9 +92,27 @@ export type BlockData = {
   /** The variant key for the `sequence` baseline. */
   baselineSequence?: string;
 
+  // --- Snapshots of the picked columns' distinct values ---------------------
+  //
+  // The args lambda sees only `data`, but the checks of the gate order, the input and the
+  // exclusions need a picked column's VALUES, which only an output of the model reads — so the
+  // UI writes ref and values in one gesture.
+  //
+  // Allowed to go stale: keeping it fresh means a watcher on an output writing back to shared
+  // data, and the computation re-derives the real values anyway.
+  /**
+   * Distinct values of the picked gate column at the moment it was picked, as column value ids
+   * of that column.
+   */
+  gateValues: ColumnValueId[];
   /** Snapshotted so the subtitle stays a pure function of `data`: only the option list knows a
    *  column's label, and that list is an output. */
   gateColumnLabel?: string;
+  /**
+   * Distinct values of the picked condition column at the moment it was picked, as column value
+   * ids of that column.
+   */
+  conditionValues: ColumnValueId[];
 
   /** The user's override for the block subtitle. Empty means use the derived label. */
   customBlockLabel: string;

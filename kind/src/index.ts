@@ -12,12 +12,18 @@ import { name, version } from "../package.json" with { type: "json" };
  * FACS ladder over library after library pins that once and then only picks the dataset.
  *
  * The three columns are result-pool column ids, each naming the block that produced the column.
- * The gates of the ladder are column value ids of the gate column: each names the column it was
- * picked from, and through it the block that produced the value. A gate the column no longer
- * carries stays in the ladder and is shown as not available.
+ * The gates of the ladder and the two value snapshots are column value ids of their columns:
+ * each names the column it was picked from, and through it the block that produced the value.
  *
- * `gateColumnLabel` travels with the gate column because the subtitle is a pure function of the
- * block's data, and only the column's option knows its label.
+ * **The three value snapshots are params for a reason that is easy to miss.** `gateValues`,
+ * `conditionValues` and `gateColumnLabel` are snapshots the UI writes when a column is picked,
+ * and they look like derived state that a fresh block should rebuild. But the model's
+ * `settingsIssues` validates `gateOrder` against `gateValues`, so a template carrying a gate
+ * ladder and an empty snapshot arrives with Run disabled and two complaints; and the only way
+ * to refill the snapshot from the UI is to re-pick the gate column, which overwrites
+ * `gateOrder` with every value of the column. The templated ladder would be destroyed by the
+ * act of making the block runnable. Carrying the snapshots keeps the template usable on
+ * arrival.
  *
  * Left out, and why:
  *
@@ -37,7 +43,9 @@ export type BlockParams = {
   gateColumnRef?: ColumnUniversalId;
   sortFractionColumnRef?: ColumnUniversalId;
   gateOrder?: ColumnValueId[];
+  gateValues?: ColumnValueId[];
   gateColumnLabel?: string;
+  conditionValues?: ColumnValueId[];
 };
 
 // Identity (`name`/`version`) comes from this package's own `package.json`, so the on-wire
@@ -62,22 +70,31 @@ export const kind = defineBlockKind<BlockParams>({
  * that list in step with the type above.
  *
  * The checks stop at the form of a value. That a gate column is not also the condition column,
- * that the ladder holds values of the gate column — those are refused by `settingsIssues` in the
- * model, where the whole configuration is in view. A parser stricter than the settings drawer
- * would make this block export a template its own kind then refuses to apply.
+ * that `gateOrder` names only values `gateValues` carries — those are refused by
+ * `settingsIssues` in the model, where the whole configuration is in view. A parser stricter than
+ * the settings drawer would make this block export a template its own kind then refuses to apply.
  */
 function parseInitializationParams(value: unknown): BlockParams {
   assertParamsObject(value);
 
-  const { conditionColumnRef, gateColumnRef, sortFractionColumnRef, gateOrder, gateColumnLabel } =
-    value;
+  const {
+    conditionColumnRef,
+    gateColumnRef,
+    sortFractionColumnRef,
+    gateOrder,
+    gateValues,
+    gateColumnLabel,
+    conditionValues,
+  } = value;
 
   return {
     conditionColumnRef: optionalColumnRef(conditionColumnRef, "conditionColumnRef"),
     gateColumnRef: optionalColumnRef(gateColumnRef, "gateColumnRef"),
     sortFractionColumnRef: optionalColumnRef(sortFractionColumnRef, "sortFractionColumnRef"),
     gateOrder: optionalValueList(gateOrder, "gateOrder"),
+    gateValues: optionalValueList(gateValues, "gateValues"),
     gateColumnLabel: optionalString(gateColumnLabel, "gateColumnLabel"),
+    conditionValues: optionalValueList(conditionValues, "conditionValues"),
   };
 }
 
