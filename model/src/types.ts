@@ -1,5 +1,5 @@
 import type { GraphMakerState } from "@milaboratories/graph-maker";
-import type { PlDataTableStateV2, PlRef, SUniversalPColumnId } from "@platforma-sdk/model";
+import type { ColumnUniversalId, ColumnValueId, PlDataTableStateV2 } from "@platforma-sdk/model";
 
 /**
  * One word for what the run did, **derived** by the computation from whether an input was
@@ -12,28 +12,36 @@ export type BaselineOption = "wild-type" | "synonymous" | "sequence";
 
 /**
  * What the workflow consumes. Fields 8-11 are omitted rather than defaulted on a gate-ranking
- * run, so an existing block's args keep their exact bytes.
+ * run, so the args JSON carries only what the run uses.
+ *
+ * Every column is a result-pool column id, naming the block that produced it. Every picked value
+ * is a column value id of the column it was picked from; the workflow reads the plain values
+ * back out at its entry.
  */
 export type BlockArgs = {
-  /** 1. The dataset selection that anchors every other input. */
-  abundanceRef: PlRef;
-  /** 2. A per-sample metadata column, picked from the option list. */
-  conditionColumnRef: SUniversalPColumnId;
-  /** 3. A per-sample metadata column, picked for the other role. */
-  gateColumnRef: SUniversalPColumnId;
+  /** 1. The dataset selection that anchors every other input. Absent only on a block not yet
+   *  allowed to run. */
+  abundanceRef?: ColumnUniversalId;
+  /** 2. A per-sample metadata column, picked from the option list. Absent only on a block not
+   *  yet allowed to run. */
+  conditionColumnRef?: ColumnUniversalId;
+  /** 3. A per-sample metadata column, picked for the other role. Absent only on a block not yet
+   *  allowed to run. */
+  gateColumnRef?: ColumnUniversalId;
   /**
-   * 4. A rank per selected gate, contiguous from 1, derived from `gateOrder` by position.
+   * 4. A rank per selected gate, contiguous from 1, derived from `gateOrder` by position. Keyed
+   * by the gate's column value id, so each key still names the gate column it was picked from.
    *
    * The key set doubles as the run's gate scope: a gate-column value absent from it takes no
    * part in the run, which is the ordinary case rather than an incomplete configuration.
    */
-  gateRanks: Record<string, number>;
+  gateRanks: Record<ColumnValueId, number>;
   /** 5. Absent (empty) means every distinct value of the condition column is a condition. */
-  excludedConditions: string[];
+  excludedConditions: ColumnValueId[];
   /** 6. Absent means **no floor is applied** — not a floor of zero, and not a guess. */
   readFloor?: number;
   /** 7. Absent means the score is computed **uncorrected**, declared on every value. */
-  sortFractionColumnRef?: SUniversalPColumnId;
+  sortFractionColumnRef?: ColumnUniversalId;
 
   /**
    * 8. Whether the gates lie along a binding axis. Absent means they do. False drops the rank
@@ -45,7 +53,7 @@ export type BlockArgs = {
    * for the enrichment. Never a key of `gateRanks` — a gate that referenced itself would give
    * exactly 1 everywhere.
    */
-  inputGate?: string;
+  inputGate?: ColumnValueId;
   /** 10. Absent means report no baseline, which is an answer and not an unset field. */
   baseline?: BaselineOption;
   /** 11. The variant key the `sequence` baseline names. Set only with that option. */
@@ -55,19 +63,21 @@ export type BlockArgs = {
 /** What the user edits. Projected to `BlockArgs` by the args lambda; view state never crosses. */
 export type BlockData = {
   // --- The seven arguments, in argument order ------------------------------
-  abundanceRef?: PlRef;
-  conditionColumnRef?: SUniversalPColumnId;
-  gateColumnRef?: SUniversalPColumnId;
+  abundanceRef?: ColumnUniversalId;
+  conditionColumnRef?: ColumnUniversalId;
+  gateColumnRef?: ColumnUniversalId;
   /**
-   * The selected gates in declared order, weakest binder first. A list, not a rank map, so
-   * position IS the rank and a duplicate rank is unrepresentable. Seeded from the column then
-   * narrowed by the user; removing a gate takes it out of the run.
+   * The selected gates in declared order, weakest binder first, as column value ids of the gate
+   * column. A list, not a rank map, so position IS the rank and a duplicate rank is
+   * unrepresentable. Seeded from the column then narrowed by the user; removing a gate takes it
+   * out of the run. A gate the column no longer carries stays and is shown as not available.
    */
-  gateOrder: string[];
-  excludedConditions: string[];
+  gateOrder: ColumnValueId[];
+  /** Column value ids of the condition column. */
+  excludedConditions: ColumnValueId[];
   /** `undefined` applies no floor at all, and is the normal first run. */
   readFloor?: number;
-  sortFractionColumnRef?: SUniversalPColumnId;
+  sortFractionColumnRef?: ColumnUniversalId;
 
   // --- The two facts, plus the baseline -------------------------------------
   //
@@ -75,8 +85,11 @@ export type BlockData = {
   // metrics on. There is no mode.
   /** `undefined` means ordered, which is the ordinary case. */
   gatesOrdered?: boolean;
-  /** The gate value serving as the unsorted reference. Only meaningful in enrichment mode. */
-  inputGate?: string;
+  /**
+   * The gate value serving as the unsorted reference, as a column value id of the gate column.
+   * Only meaningful in enrichment mode.
+   */
+  inputGate?: ColumnValueId;
   /** `undefined` reports no baseline. */
   baseline?: BaselineOption;
   /** The variant key for the `sequence` baseline. */
@@ -84,18 +97,25 @@ export type BlockData = {
 
   // --- Snapshots of the picked columns' distinct values ---------------------
   //
-  // The args lambda sees only `data`, but two validations need a picked column's VALUES, which
-  // only a PFrame fetch produces — so the UI writes ref and values in one gesture.
+  // The args lambda sees only `data`, but the checks of the gate order, the input and the
+  // exclusions need a picked column's VALUES, which only the UI reads, through a frame of the
+  // column — so the UI writes ref and values in one gesture.
   //
   // Allowed to go stale: keeping it fresh means a watcher on an output writing back to shared
   // data, and the computation re-derives the real values anyway.
-  /** Distinct values of the picked gate column, at the moment it was picked. */
-  gateValues: string[];
+  /**
+   * Distinct values of the picked gate column at the moment it was picked, as column value ids
+   * of that column.
+   */
+  gateValues: ColumnValueId[];
   /** Snapshotted so the subtitle stays a pure function of `data`: only the option list knows a
    *  column's label, and that list is an output. */
   gateColumnLabel?: string;
-  /** Distinct values of the picked condition column, at the moment it was picked. */
-  conditionValues: string[];
+  /**
+   * Distinct values of the picked condition column at the moment it was picked, as column value
+   * ids of that column.
+   */
+  conditionValues: ColumnValueId[];
 
   /** The user's override for the block subtitle. Empty means use the derived label. */
   customBlockLabel: string;
@@ -126,7 +146,7 @@ export type GateCollected = {
 export type PooledGroup = {
   condition: string;
   gate: string;
-  /** Sample **ids**, sorted. The UI resolves them to labels via `sampleLabelPframe`. */
+  /** Sample **ids**, sorted. The UI resolves them to labels via `sampleLabelSource`. */
   samples: string[];
   /** Replicates supplied different fractions and were averaged. Absent when uncorrected. */
   sortFractionsDiffer?: boolean;

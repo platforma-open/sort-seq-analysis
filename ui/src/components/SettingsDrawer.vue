@@ -3,12 +3,16 @@
  * One control per argument. Two things are easy to "fix" wrongly:
  *
  * 1. The read-count floor is clearable — cleared IS the answer, and the normal first run.
- * 2. Column values are snapshotted on the user's gesture, never by a watcher: a watcher on an
- *    output writing to `data` is the hairpin, and two clients would race.
+ * 2. Column values are snapshotted and the gate order seeded on the user's gesture, never by a
+ *    watcher: a watcher on an output writing to `data` is the hairpin, and two clients would
+ *    race.
+ *
+ * Picked gates, the input and excluded conditions are column value ids of their columns. One no
+ * longer among the column's values stays picked and is shown as not available, with the reason
+ * in a tooltip; only picking another column clears them.
  */
 import { BASELINE_AVAILABLE } from "@platforma-open/milaboratories.sort-seq-analysis.model";
-import type { SUniversalPColumnId } from "@platforma-sdk/model";
-import { getSingleColumnData, type PObjectId } from "@platforma-sdk/model";
+import type { ColumnUniversalId, ColumnValueId, ColumnValueOption } from "@platforma-sdk/model";
 import {
   PlAccordion,
   PlAccordionSection,
@@ -18,15 +22,16 @@ import {
   PlCheckbox,
   PlElementList,
   PlDropdownMulti,
-  PlDropdownRef,
   PlMaskIcon24,
   PlNumberField,
   PlSlideModal,
   PlTooltip,
-  useWatchFetch,
+  PlValueLabel,
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
+import type { ColumnValueOptionsState } from "../useColumnValueStates";
+import { useColumnValueStates } from "../useColumnValueStates";
 
 const app = useApp();
 
@@ -37,40 +42,54 @@ const armsOpen = ref(true);
 // Open state belongs to the parent, which mounts this beside the button that opens it.
 const isOpen = defineModel<boolean>({ required: true });
 
+/** The values of every metadata column on offer and of the picked ones, by column. */
+const valueStates = useColumnValueStates(() => app.model.outputs.metadataValueSources);
+
 /**
- * Distinct values of EVERY metadata column, keyed by ref rather than role: the snapshot is
- * written in the same gesture as the pick, so the values must already be in hand. Fetching only
- * picked columns lags by a round trip and the gate-order control never appears.
+ * How far the values of a metadata column are read. `undefined` while no column is picked;
+ * loading until the model gives a source for it.
  */
-const valuesByRef = useWatchFetch(
-  () => ({
-    pframe: app.model.outputs.metadataColumnsPframe,
-    columns: app.model.outputs.metadataColumns,
-  }),
-  async ({ pframe, columns }) => {
-    const out: Record<string, string[]> = {};
-    if (!pframe || !columns) return out;
-
-    for (const column of columns) {
-      const data = await getSingleColumnData(pframe, column.objectId as PObjectId);
-      const raw: unknown[] = data?.data ?? [];
-      const values = raw.filter((v): v is string | number => v !== null && v !== undefined);
-      out[column.value] = [...new Set(values.map((v) => String(v)))].sort();
-    }
-    return out;
-  },
-);
-
-function valuesFor(ref: SUniversalPColumnId | undefined): string[] {
-  if (!ref) return [];
-  return valuesByRef.value?.[ref] ?? [];
+function valueStateOf(column: ColumnUniversalId | undefined): ColumnValueOptionsState | undefined {
+  if (column === undefined) return undefined;
+  return valueStates.value.get(column) ?? { type: "loading" };
 }
 
-const conditionValueOptions = computed(() =>
-  valuesFor(app.model.data.conditionColumnRef).map((value) => ({ value, label: value })),
-);
+/**
+ * Values of a metadata column as options of a value picker. `undefined` while they are not
+ * known, so picks are not marked as not available before they are read. None for a column that
+ * is gone, so every pick of it is.
+ */
+function valueOptionsOf(
+  state: ColumnValueOptionsState | undefined,
+): ColumnValueOption[] | undefined {
+  if (state?.type === "read") return state.options;
+  if (state?.type === "absent") return [];
+  return undefined;
+}
 
-const gateValues = computed(() => app.model.data.gateValues);
+/** Why a picked column offers no values, shown under the control that picks it. */
+function valuesProblemOf(state: ColumnValueOptionsState | undefined): string | undefined {
+  if (state?.type === "absent") {
+    return "The column is no longer produced by its block, so it has no values to pick";
+  }
+  if (state?.type === "failed") {
+    return `The values of the column could not be read: ${state.message}`;
+  }
+  return undefined;
+}
+
+/** The values of a column, in natural order, as far as they are read now. */
+function valuesOf(column: ColumnUniversalId | undefined): ColumnValueId[] {
+  return (valueOptionsOf(valueStateOf(column)) ?? []).map((option) => option.value);
+}
+
+const conditionValueState = computed(() => valueStateOf(app.model.data.conditionColumnRef));
+
+const gateValueState = computed(() => valueStateOf(app.model.data.gateColumnRef));
+
+const conditionValueOptions = computed(() => valueOptionsOf(conditionValueState.value));
+
+const gateValueOptions = computed(() => valueOptionsOf(gateValueState.value));
 
 /** `undefined` means ordered, which is the ordinary case and every block made before this. */
 const gatesOrdered = computed({
@@ -80,14 +99,15 @@ const gatesOrdered = computed({
   },
 });
 
+const gateValues = computed(() => app.model.data.gateValues);
+
 /**
- * The gate values that are NOT rungs — the reference cannot also be a gate the run ranks. So
- * the control offers what the gate-order list has had removed.
+ * The gate column's values that are NOT rungs — the reference cannot also be a gate the run
+ * ranks. So the control offers what the gate-order list has had removed. A picked input no longer
+ * among the column's values stays picked and is shown as not available.
  */
 const inputGateOptions = computed(() =>
-  gateValues.value
-    .filter((value) => !app.model.data.gateOrder.includes(value))
-    .map((value) => ({ label: value, value })),
+  gateValueOptions.value?.filter((option) => !app.model.data.gateOrder.includes(option.value)),
 );
 
 /**
@@ -138,8 +158,9 @@ const baselineAvailableHere = computed(
   () => isNucleotide.value !== false && app.model.data.inputGate !== undefined,
 );
 
-function setAbundance(ref: typeof app.model.data.abundanceRef) {
-  // A stored anchored id is meaningless against a different anchor.
+function setAbundance(ref: ColumnUniversalId | undefined) {
+  // The metadata columns are picked among those on the dataset's sample axis, so another
+  // dataset's picks do not carry over.
   app.model.data.abundanceRef = ref;
   app.model.data.conditionColumnRef = undefined;
   app.model.data.gateColumnRef = undefined;
@@ -157,22 +178,23 @@ function setAbundance(ref: typeof app.model.data.abundanceRef) {
   app.model.data.baselineSequence = undefined;
 }
 
-function setConditionColumn(ref: SUniversalPColumnId | undefined) {
+function setConditionColumn(ref: ColumnUniversalId | undefined) {
   // Ref and snapshot in one gesture. The snapshot may go stale; re-picking refreshes it.
   app.model.data.conditionColumnRef = ref;
-  app.model.data.conditionValues = valuesFor(ref);
+  app.model.data.conditionValues = valuesOf(ref);
+  // The exclusions are values of the old column.
   app.model.data.excludedConditions = [];
 }
 
-function setGateColumn(ref: SUniversalPColumnId | undefined) {
+function setGateColumn(ref: ColumnUniversalId | undefined) {
   app.model.data.gateColumnRef = ref;
-  app.model.data.gateValues = valuesFor(ref);
+  app.model.data.gateValues = valuesOf(ref);
   // The label too: only the option list knows it, and the subtitle derives from `data` alone.
   app.model.data.gateColumnLabel = app.model.outputs.gateOptions?.find(
     (option) => option.value === ref,
   )?.label;
   // Seed the order from the column; a previous ordering is meaningless against a new column.
-  app.model.data.gateOrder = valuesFor(ref);
+  app.model.data.gateOrder = valuesOf(ref);
   // Same gesture, same reason: the old input was a value of the old column.
   app.model.data.inputGate = undefined;
 }
@@ -183,7 +205,7 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
     <template #title>Settings</template>
 
     <!-- 1. The anchor. Until one is picked, no other input has an option list. -->
-    <PlDropdownRef
+    <PlDropdown
       :model-value="app.model.data.abundanceRef"
       :options="app.model.outputs.abundanceOptions ?? []"
       label="Select dataset"
@@ -194,13 +216,14 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
       <template #tooltip>
         The sequenced sort-seq run; every setting below comes from its sample annotations.
       </template>
-    </PlDropdownRef>
+    </PlDropdown>
 
     <!-- Together because picking the column is what populates the list. -->
     <PlDropdown
       :model-value="app.model.data.gateColumnRef"
       :options="app.model.outputs.gateOptions ?? []"
       label="Gate column"
+      :error="valuesProblemOf(gateValueState)"
       required
       clearable
       @update:model-value="setGateColumn"
@@ -241,7 +264,9 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
           </PlTooltip>
         </div>
         <PlElementList v-model:items="app.model.data.gateOrder">
-          <template #item-title="{ item }">{{ item }}</template>
+          <template #item-title="{ item }">
+            <PlValueLabel :value="item" :options="gateValueOptions" />
+          </template>
         </PlElementList>
         <PlBtnGhost v-if="gateOrderModified" @click="resetGateOrder">
           Reset to default
@@ -265,6 +290,7 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
           :model-value="app.model.data.conditionColumnRef"
           :options="app.model.outputs.conditionOptions ?? []"
           label="Factor column"
+          :error="valuesProblemOf(conditionValueState)"
           required
           clearable
           @update:model-value="setConditionColumn"
@@ -277,6 +303,7 @@ function setGateColumn(ref: SUniversalPColumnId | undefined) {
         <PlDropdownMulti
           v-model="app.model.data.excludedConditions"
           :options="conditionValueOptions"
+          :disabled="conditionValueState?.type === 'failed'"
           label="Exclude factors"
         >
           <template #tooltip>
