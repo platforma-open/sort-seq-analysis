@@ -1,9 +1,5 @@
-import type { ColumnUniversalId, ColumnValueOption, RenderCtxBase } from "@platforma-sdk/model";
-import {
-  deriveColumnOptions,
-  deriveColumnValueOptions,
-  readColumnValues,
-} from "@platforma-sdk/model";
+import type { ColumnUniversalId, ColumnValuesSource, RenderCtxBase } from "@platforma-sdk/model";
+import { createColumnValuesSource, deriveColumnOptions } from "@platforma-sdk/model";
 import type { ColumnPickerOption } from "./column_access";
 import { axisSelector, findColumn, resultPool } from "./column_access";
 import { metadataSelector, sampleLabelSelector } from "./columns";
@@ -14,12 +10,6 @@ export type MetadataRole = "conditionColumnRef" | "gateColumnRef" | "sortFractio
 
 /** The column picked for each role. */
 export type MetadataPicks = Pick<BlockData, MetadataRole>;
-
-/** The values of one sample-metadata column, as options of the value pickers. */
-export type MetadataColumnValues = {
-  column: ColumnUniversalId;
-  options: ColumnValueOption[];
-};
 
 /**
  * Sample-metadata columns of upstream blocks whose only axis is the dataset's sample axis
@@ -57,22 +47,20 @@ export function narrowToRole(
 }
 
 /**
- * The values of every offered sample-metadata column and of the picked condition and gate
- * columns, each value a column value id naming its column, and through it the block that
- * produced the value.
+ * Where the UI reads the values of every offered sample-metadata column and of the picked
+ * condition and gate columns: one source per column, each a frame of that column alone.
  *
  * Every offered column rather than the picked ones: a column's values are snapshotted, and the
  * gate order seeded, in the same gesture as the pick, so they must be in hand before it.
  *
- * `undefined` while the metadata options are. A column whose values cannot be read now — still
- * resolving, not computed, gone, or not stored inline — offers no values, so its picks show as
- * not available.
+ * `undefined` while the metadata options are. A picked column that is gone has an `absent`
+ * source, so its picks show as not available.
  */
-export function getMetadataValues(
+export function getMetadataValueSources(
   ctx: RenderCtxBase,
   abundanceRef: ColumnUniversalId,
   picks: MetadataPicks,
-): MetadataColumnValues[] | undefined {
+): ColumnValuesSource[] | undefined {
   const options = getMetadataOptions(ctx, abundanceRef);
   if (options === undefined) return undefined;
 
@@ -80,17 +68,17 @@ export function getMetadataValues(
   for (const picked of [picks.conditionColumnRef, picks.gateColumnRef]) {
     if (picked !== undefined) columns.add(picked);
   }
-  return [...columns].map((column) => ({ column, options: readValueOptions(ctx, column) }));
+  return [...columns].map((column) => createColumnValuesSource(ctx, column));
 }
 
 /**
- * Sample names by sample id, read off the label column of the dataset's sample axis.
- * `undefined` while the dataset or its label column is not known or not readable.
+ * Where the UI reads the sample names from: a frame of the label column of the dataset's sample
+ * axis alone. `undefined` while the dataset or its label column is not known.
  */
-export function getSampleLabels(
+export function getSampleLabelSource(
   ctx: RenderCtxBase,
   abundanceRef: ColumnUniversalId,
-): Record<string, string> | undefined {
+): ColumnValuesSource | undefined {
   const sampleAxis = findColumn(ctx, abundanceRef)?.getSpec().axesSpec[0];
   if (sampleAxis === undefined) return undefined;
 
@@ -104,12 +92,29 @@ export function getSampleLabels(
     })
     .getColumns();
   if (column === undefined) return undefined;
-
-  const entries = readColumnValues(column);
-  if (entries === undefined) return undefined;
-  // One axis, so the key's only entry is the sample id.
-  return Object.fromEntries(entries.map((entry) => [String(entry.key[0]), String(entry.value)]));
+  return createColumnValuesSource(ctx, column.id);
 }
+
+/**
+ * Sample names by sample id, from the rows of the label column: `sampleIds[i]` is the key of the
+ * row whose label is `labels[i]`. A row missing either is left out.
+ */
+export function pairSampleLabels(
+  sampleIds: readonly SampleLabelCell[],
+  labels: readonly SampleLabelCell[],
+): Record<string, string> {
+  const pairs: Record<string, string> = {};
+  for (const [index, sampleId] of sampleIds.entries()) {
+    const label = labels[index];
+    if (sampleId !== null && label !== null && label !== undefined) {
+      pairs[String(sampleId)] = String(label);
+    }
+  }
+  return pairs;
+}
+
+/** One cell of the label column as a frame reads it: a key or a label, `null` where missing. */
+export type SampleLabelCell = string | number | null;
 
 // Internals
 
@@ -118,9 +123,3 @@ const METADATA_ROLES: readonly MetadataRole[] = [
   "gateColumnRef",
   "sortFractionColumnRef",
 ];
-
-function readValueOptions(ctx: RenderCtxBase, columnRef: ColumnUniversalId): ColumnValueOption[] {
-  const column = findColumn(ctx, columnRef);
-  const entries = column === undefined ? undefined : readColumnValues(column);
-  return deriveColumnValueOptions(entries ?? []);
-}
