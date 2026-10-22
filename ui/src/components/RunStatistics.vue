@@ -5,8 +5,8 @@
  * `@click.stop` is required: the dialog closes on an outside click, and the opening click would
  * bubble up and be read as outside. Open state is a local ref — in `data` it would be shared.
  */
+import type { PresentColumnFrame } from "@platforma-open/milaboratories.sort-seq-analysis.model";
 import { pairSampleLabels } from "@platforma-open/milaboratories.sort-seq-analysis.model";
-import type { PresentColumnValuesSource } from "@platforma-sdk/model";
 import { getSingleColumnData, PFrameImpl } from "@platforma-sdk/model";
 import {
   PlAgOverlayLoading,
@@ -80,7 +80,12 @@ const inputDepths = computed(() => {
 
 /** Sample names by sample id, read off the label column's frame. */
 const sampleLabels = useWatchFetch(
-  () => app.model.outputs.sampleLabelSource,
+  // An output recomputed after its producer reruns keeps its object and changes the frame inside
+  // it; copying it makes the read follow the frame.
+  () => {
+    const source = app.model.outputs.sampleLabelSource;
+    return source === undefined ? undefined : { ...source };
+  },
   async (source) => (source?.type === "present" ? readSampleLabels(source) : undefined),
 );
 
@@ -90,9 +95,7 @@ function labelFor(sampleId: string): string {
 }
 
 /** The frame holds the label column alone, and it has one axis: the sample id. */
-async function readSampleLabels(
-  source: PresentColumnValuesSource,
-): Promise<Record<string, string>> {
+async function readSampleLabels(source: PresentColumnFrame): Promise<Record<string, string>> {
   const [column] = await new PFrameImpl(source.frame).listColumns();
   if (column === undefined) return {};
   const { axesData, data } = await getSingleColumnData(source.frame, column.columnId);
