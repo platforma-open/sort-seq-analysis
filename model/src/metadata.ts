@@ -42,13 +42,12 @@ export type PresentColumnFrame = Extract<ColumnFrame, { type: "present" }>;
  * resolving; a dataset that is gone from a settled pool offers no options.
  */
 export function getMetadataOptions(
-  ctx: RenderCtxBase,
   abundanceRef: ColumnUniversalId,
 ): ColumnPickerOption[] | undefined {
-  const sampleAxis = findColumn(ctx, abundanceRef)?.getSpec().axesSpec[0];
-  if (sampleAxis === undefined) return resultPool(ctx).isFinal() ? [] : undefined;
+  const sampleAxis = findColumn(abundanceRef)?.getSpec().axesSpec[0];
+  if (sampleAxis === undefined) return resultPool().isFinal() ? [] : undefined;
 
-  const columns = resultPool(ctx).filter({
+  const columns = resultPool().filter({
     include: { ...metadataSelector, axes: [axisSelector(sampleAxis)], partialAxesMatch: false },
   });
   return deriveColumnOptions(columns).map(({ id, label }) => ({ value: id, label }));
@@ -85,7 +84,7 @@ export function getMetadataValueSources(
   abundanceRef: ColumnUniversalId,
   picks: MetadataPicks,
 ): ColumnFrame[] | undefined {
-  const options = getMetadataOptions(ctx, abundanceRef);
+  const options = getMetadataOptions(abundanceRef);
   if (options === undefined) return undefined;
 
   const columns = new Set(options.map((option) => option.value));
@@ -103,10 +102,10 @@ export function getSampleLabelSource(
   ctx: RenderCtxBase,
   abundanceRef: ColumnUniversalId,
 ): ColumnFrame | undefined {
-  const sampleAxis = findColumn(ctx, abundanceRef)?.getSpec().axesSpec[0];
+  const sampleAxis = findColumn(abundanceRef)?.getSpec().axesSpec[0];
   if (sampleAxis === undefined) return undefined;
 
-  const [column] = resultPool(ctx)
+  const [column] = resultPool()
     .filter({
       include: {
         ...sampleLabelSelector,
@@ -150,7 +149,7 @@ const METADATA_ROLES: readonly MetadataRole[] = [
 
 /** A frame of `column` alone, while the column and its frame are there. */
 function columnFrame(ctx: RenderCtxBase, column: ColumnUniversalId): ColumnFrame {
-  const status = ColumnRecipe.getStatus(column, { ctx: ctx.ctx });
+  const status = ColumnRecipe.getStatus(column);
   if (status !== "present") return { type: status, column };
   const frame = ctx.createPFrame([column]);
   if (frame === undefined) return { type: "resolving", column };

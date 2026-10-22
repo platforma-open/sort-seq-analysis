@@ -4,7 +4,6 @@ import type {
   PColumn,
   PColumnDataUniversal,
   RelaxedAxisSelector,
-  RenderCtxBase,
   StringMatcher,
   TreeNodeAccessor,
 } from "@platforma-sdk/model";
@@ -17,17 +16,17 @@ export type ColumnPickerOption = {
 };
 
 /** Columns of upstream blocks. */
-export function resultPool(ctx: RenderCtxBase): ColumnsCollection {
-  return ColumnsCollection(["result_pool"], { ctx: ctx.ctx });
+export function resultPool(): ColumnsCollection {
+  return ColumnsCollection(["result_pool"]);
 }
 
 /**
  * The column with this id, found by id alone. `undefined` while it is still resolving and once
  * it is gone: a stored id may name a column its upstream block no longer produces.
  */
-export function findColumn(ctx: RenderCtxBase, id: ColumnUniversalId): ColumnRecipe | undefined {
-  if (ColumnRecipe.getStatus(id, { ctx: ctx.ctx }) !== "present") return undefined;
-  return Column(id, { ctx: ctx.ctx });
+export function findColumn(id: ColumnUniversalId): ColumnRecipe | undefined {
+  if (ColumnRecipe.getStatus(id) !== "present") return undefined;
+  return Column(id);
 }
 
 /**
@@ -35,11 +34,10 @@ export function findColumn(ctx: RenderCtxBase, id: ColumnUniversalId): ColumnRec
  * of it has arrived.
  */
 export function getOutputColumns(
-  ctx: RenderCtxBase,
   accessor: TreeNodeAccessor | undefined,
 ): ColumnsCollection | undefined {
   if (accessor === undefined) return undefined;
-  const collection = ColumnsCollection([accessor], { ctx: ctx.ctx });
+  const collection = ColumnsCollection([accessor]);
   return collection.isFinal() ? collection : undefined;
 }
 
