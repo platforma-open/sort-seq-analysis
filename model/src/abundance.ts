@@ -45,7 +45,7 @@ export function getAbundanceOptions(ctx: RenderCtxBase): DatasetOption[] {
         DATASET_KEY_AXES.has(spec.axesSpec[0].name),
       requireEnrichments: false,
     }) ?? [];
-  const columns = resultPool(ctx).filter({ include: abundanceSelector });
+  const columns = resultPool().filter({ include: abundanceSelector });
   return deriveColumnOptions(columns).flatMap(({ id, label }): DatasetOption[] => {
     const ref = toPlRef(id);
     if (ref === undefined) return [];
@@ -76,12 +76,9 @@ export function fromAbundanceSelection(selection: DatasetSelection | undefined):
  * Whether the dataset is at the nucleotide grain; `undefined` while its spec is not known or it
  * declares no alphabet.
  */
-export function isNucleotideDataset(
-  ctx: RenderCtxBase,
-  abundanceRef: ColumnUniversalId,
-): boolean | undefined {
+export function isNucleotideDataset(abundanceRef: ColumnUniversalId): boolean | undefined {
   // Axis 1 is the variant axis; the abundance selector admits only two-axis columns.
-  const alphabet = findColumn(ctx, abundanceRef)?.getSpec().axesSpec[1]?.domain?.[AlphabetDomain];
+  const alphabet = findColumn(abundanceRef)?.getSpec().axesSpec[1]?.domain?.[AlphabetDomain];
   return alphabet === undefined ? undefined : alphabet === Alphabet.Nucleotide;
 }
 

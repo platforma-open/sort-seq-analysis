@@ -221,7 +221,7 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
   .output("datasetIsNucleotide", (ctx) => {
     const abundanceRef = ctx.data.abundanceRef;
     if (abundanceRef === undefined) return undefined;
-    return isNucleotideDataset(ctx, abundanceRef);
+    return isNucleotideDataset(abundanceRef);
   })
 
   /** The pickers, each offering what the other two roles do not already hold. */
@@ -277,12 +277,12 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
 
   /** Which levels the run produced, so the UI shows one table or two. */
   .output("scoreLevels", (ctx) => {
-    const own = getOutputColumns(ctx, ctx.outputs?.resolve("scoresPf"))?.getColumns();
+    const own = getOutputColumns(ctx.outputs?.resolve("scoresPf"))?.getColumns();
     if (!own) return undefined;
     return scoreLevelsOf(own);
   })
   .output("distributionConditions", (ctx) => {
-    const columns = getOutputColumns(ctx, ctx.outputs?.resolve("distributionPf"))?.getColumns();
+    const columns = getOutputColumns(ctx.outputs?.resolve("distributionPf"))?.getColumns();
     if (!columns) return undefined;
     return distributionConditionsOf(columns);
   })
@@ -295,14 +295,14 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
    * axis's label column, without which charts draw raw keys.
    */
   .outputWithStatus("distributionPf", (ctx) => {
-    const columns = getOutputColumns(ctx, ctx.outputs?.resolve("distributionPf"))?.getColumns();
+    const columns = getOutputColumns(ctx.outputs?.resolve("distributionPf"))?.getColumns();
     if (!columns) return undefined;
     return createPFrameForGraphs(ctx, toPColumns(columns));
   })
 
   /** The same columns as id+spec pairs, so a page binds to real specs instead of names. */
   .output("distributionPfCols", (ctx) => {
-    const columns = getOutputColumns(ctx, ctx.outputs?.resolve("distributionPf"))?.getColumns();
+    const columns = getOutputColumns(ctx.outputs?.resolve("distributionPf"))?.getColumns();
     if (!columns) return undefined;
     return columns.map((column) => ({ id: column.id, spec: column.getSpec() }));
   })
@@ -379,11 +379,11 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
    * back as a space — `CD4+` being an ordinary condition value.
    */
   .sections((ctx) => {
-    const columns = getOutputColumns(ctx, ctx.outputs?.resolve("distributionPf"))?.getColumns();
+    const columns = getOutputColumns(ctx.outputs?.resolve("distributionPf"))?.getColumns();
 
     // Each entry must stay an `as const` literal with no annotation on the array: the route's
     // query type is derived from the href's template literal type.
-    const levels = getOutputColumns(ctx, ctx.outputs?.resolve("scoresPf"))?.getColumns();
+    const levels = getOutputColumns(ctx.outputs?.resolve("scoresPf"))?.getColumns();
     const hasNt = scoreLevelsOf(levels ?? []).includes(Alphabet.Nucleotide);
 
     return [
@@ -425,7 +425,7 @@ function roleOptions(
 ): ColumnPickerOption[] | undefined {
   const abundanceRef = ctx.data.abundanceRef;
   if (abundanceRef === undefined) return undefined;
-  const options = getMetadataOptions(ctx, abundanceRef);
+  const options = getMetadataOptions(abundanceRef);
   if (options === undefined) return undefined;
   return narrowToRole(options, ctx.data, role);
 }
@@ -455,7 +455,7 @@ function distributionConditionsOf(columns: readonly ColumnRecipe[]): string[] {
  * apart by the `pl7.app/alphabet` domain. `undefined` where the run produced none.
  */
 function buildScoresTable(ctx: BlockRenderCtx<BlockArgs, BlockData>, alphabet: string) {
-  const all = getOutputColumns(ctx, ctx.outputs?.resolve("scoresPf"));
+  const all = getOutputColumns(ctx.outputs?.resolve("scoresPf"));
   if (!all) return undefined;
   // The alphabet is the only thing separating the two families: they share every name and
   // condition domain, and mixing them joins protein scores to nothing.
