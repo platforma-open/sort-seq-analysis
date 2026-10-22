@@ -22,7 +22,6 @@ import type {
   ColumnValueOption,
   DatasetSelection,
 } from "@platforma-sdk/model";
-import { columnValueLabel } from "@platforma-sdk/model";
 import {
   PlAccordion,
   PlAccordionSection,
@@ -113,13 +112,12 @@ const gatesOrdered = computed({
 const gateValues = computed(() => app.model.data.gateValues);
 
 /**
- * The gate values that are NOT rungs — the reference cannot also be a gate the run ranks. So
- * the control offers what the gate-order list has had removed.
+ * The gate column's values that are NOT rungs — the reference cannot also be a gate the run
+ * ranks. So the control offers what the gate-order list has had removed. A picked input no longer
+ * among the column's values stays picked and is shown as not available.
  */
 const inputGateOptions = computed(() =>
-  gateValues.value
-    .filter((value) => !app.model.data.gateOrder.includes(value))
-    .map((value) => ({ value, label: columnValueLabel(value) })),
+  gateValueOptions.value?.filter((option) => !app.model.data.gateOrder.includes(option.value)),
 );
 
 /**
