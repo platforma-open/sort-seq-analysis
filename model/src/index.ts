@@ -8,6 +8,7 @@ import {
   discoverTableColumnSnaphots,
   type InferOutputsType,
   parseColumnValueId,
+  type ArgsIssue,
 } from "@platforma-sdk/model";
 import { kind } from "@platforma-open/milaboratories.sort-seq-analysis.kind";
 import { getAbundanceOptions, isNucleotideDataset } from "./abundance";
@@ -16,14 +17,20 @@ import { exact, getOutputColumns, toPColumns } from "./column_access";
 import { Alphabet, AlphabetDomain, FacsBin, PColumnName } from "./columns";
 import { blockDataModel } from "./dataModel";
 import type { MetadataRole } from "./metadata";
-import { getMetadataOptions, getMetadataValues, getSampleLabels, narrowToRole } from "./metadata";
+import {
+  getMetadataOptions,
+  getMetadataValueSources,
+  getSampleLabelSource,
+  narrowToRole,
+} from "./metadata";
 import type { BlockArgs, BlockData, RunManifest } from "./types";
 
 export { blockDataModel, defaultDistributionGraphState } from "./dataModel";
 export * from "./columns";
 export * from "./types";
 export type { ColumnPickerOption } from "./column_access";
-export type { MetadataColumnValues } from "./metadata";
+export { pairSampleLabels } from "./metadata";
+export type { SampleLabelCell } from "./metadata";
 
 /**
  * Whether the baseline is offered. Pairs with `EMIT_BASELINE_COLUMNS` in
@@ -144,29 +151,16 @@ export function distributionPlotTitle(
 
 export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind })
   .args<BlockArgs>((data) => {
-    // Throwing disables Run but carries no reason to the user; `settingsIssues` names it.
-    const issues = settingsIssues(data);
-    if (issues.length > 0) throw new Error(issues.join("; "));
-
-    // `settingsIssues` refuses each of these absent; checked again so the type says so.
-    const { abundanceRef, conditionColumnRef, gateColumnRef } = data;
-    if (
-      abundanceRef === undefined ||
-      conditionColumnRef === undefined ||
-      gateColumnRef === undefined
-    ) {
-      throw new Error("Select the dataset, the condition column and the gate column");
-    }
-
     // Two facts, not a mode. An enrichment needs a reference, so naming one is what asks for
     // it; ranks need an order, so the toggle is what asks for those. `inputGate` carries the
     // first straight through, so only the second needs a local.
     const ordered = data.gatesOrdered !== false;
 
     return {
-      abundanceRef,
-      conditionColumnRef,
-      gateColumnRef,
+      // Absent on an incomplete configuration; `argsIssues` keeps such args from running.
+      abundanceRef: data.abundanceRef,
+      conditionColumnRef: data.conditionColumnRef,
+      gateColumnRef: data.gateColumnRef,
       // Position becomes the rank, contiguous over the gates the list holds — a gap would
       // move every score, since ranks enter the weighted mean as numbers. The key set also
       // tells the computation which gates the run covers.
@@ -196,6 +190,12 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
     };
   })
 
+  // An error disables Run but its message does not reach the user; the `settingsIssues`
+  // output names it.
+  .argsIssues(({ data }) =>
+    settingsIssues(data).map((message): ArgsIssue => ({ severity: "error", message })),
+  )
+
   // ---------------------------------------------------------------------------
   // Option lists. Four pickers, two predicates.
   // ---------------------------------------------------------------------------
@@ -224,21 +224,21 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
   // ---------------------------------------------------------------------------
 
   /**
-   * The values of every metadata column on offer, so a column's values can be snapshotted and
-   * the gate order seeded in the same gesture as the column pick, and the picked gates, input and
-   * excluded conditions be shown by the values they pick.
+   * Where the UI reads the values of every metadata column on offer, so a column's values can be
+   * snapshotted and the gate order seeded in the same gesture as the column pick, and the picked
+   * gates, input and excluded conditions be shown by the values they pick.
    */
-  .output("metadataValues", (ctx) => {
+  .output("metadataValueSources", (ctx) => {
     const abundanceRef = ctx.data.abundanceRef;
     if (abundanceRef === undefined) return undefined;
-    return getMetadataValues(ctx, abundanceRef, ctx.data);
+    return getMetadataValueSources(ctx, abundanceRef, ctx.data);
   })
 
-  /** Sample names by sample id, for the pooling report's sample ids. */
-  .output("sampleLabels", (ctx) => {
+  /** Where the UI reads the sample names from, for the pooling report's sample ids. */
+  .output("sampleLabelSource", (ctx) => {
     const abundanceRef = ctx.data.abundanceRef;
     if (abundanceRef === undefined) return undefined;
-    return getSampleLabels(ctx, abundanceRef);
+    return getSampleLabelSource(ctx, abundanceRef);
   })
 
   // ---------------------------------------------------------------------------

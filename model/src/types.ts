@@ -19,12 +19,15 @@ export type BaselineOption = "wild-type" | "synonymous" | "sequence";
  * back out at its entry.
  */
 export type BlockArgs = {
-  /** 1. The dataset selection that anchors every other input. */
-  abundanceRef: ColumnUniversalId;
-  /** 2. A per-sample metadata column, picked from the option list. */
-  conditionColumnRef: ColumnUniversalId;
-  /** 3. A per-sample metadata column, picked for the other role. */
-  gateColumnRef: ColumnUniversalId;
+  /** 1. The dataset selection that anchors every other input. Absent only on a block not yet
+   *  allowed to run. */
+  abundanceRef?: ColumnUniversalId;
+  /** 2. A per-sample metadata column, picked from the option list. Absent only on a block not
+   *  yet allowed to run. */
+  conditionColumnRef?: ColumnUniversalId;
+  /** 3. A per-sample metadata column, picked for the other role. Absent only on a block not yet
+   *  allowed to run. */
+  gateColumnRef?: ColumnUniversalId;
   /**
    * 4. A rank per selected gate, contiguous from 1, derived from `gateOrder` by position. Keyed
    * by the gate's column value id, so each key still names the gate column it was picked from.
@@ -95,8 +98,8 @@ export type BlockData = {
   // --- Snapshots of the picked columns' distinct values ---------------------
   //
   // The args lambda sees only `data`, but the checks of the gate order, the input and the
-  // exclusions need a picked column's VALUES, which only an output of the model reads — so the
-  // UI writes ref and values in one gesture.
+  // exclusions need a picked column's VALUES, which only the UI reads, through a frame of the
+  // column — so the UI writes ref and values in one gesture.
   //
   // Allowed to go stale: keeping it fresh means a watcher on an output writing back to shared
   // data, and the computation re-derives the real values anyway.
@@ -143,7 +146,7 @@ export type GateCollected = {
 export type PooledGroup = {
   condition: string;
   gate: string;
-  /** Sample **ids**, sorted. The UI resolves them to labels via `sampleLabelPframe`. */
+  /** Sample **ids**, sorted. The UI resolves them to labels via `sampleLabelSource`. */
   samples: string[];
   /** Replicates supplied different fractions and were averaged. Absent when uncorrected. */
   sortFractionsDiffer?: boolean;

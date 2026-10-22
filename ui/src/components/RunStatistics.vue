@@ -5,13 +5,17 @@
  * `@click.stop` is required: the dialog closes on an outside click, and the opening click would
  * bubble up and be read as outside. Open state is a local ref — in `data` it would be shared.
  */
+import { pairSampleLabels } from "@platforma-open/milaboratories.sort-seq-analysis.model";
+import type { PresentColumnValuesSource } from "@platforma-sdk/model";
+import { getSingleColumnData, PFrameImpl } from "@platforma-sdk/model";
 import {
   PlAgOverlayLoading,
   PlAlert,
   PlBtnGhost,
   PlDialogModal,
   PlLogView,
-  PlIcon24,
+  PlMaskIcon24,
+  useWatchFetch,
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
@@ -74,9 +78,26 @@ const inputDepths = computed(() => {
   }));
 });
 
+/** Sample names by sample id, read off the label column's frame. */
+const sampleLabels = useWatchFetch(
+  () => app.model.outputs.sampleLabelSource,
+  async (source) => (source?.type === "present" ? readSampleLabels(source) : undefined),
+);
+
 /** The sample's name, falling back to the raw id. */
 function labelFor(sampleId: string): string {
-  return app.model.outputs.sampleLabels?.[sampleId] ?? sampleId;
+  return sampleLabels.value?.[sampleId] ?? sampleId;
+}
+
+/** The frame holds the label column alone, and it has one axis: the sample id. */
+async function readSampleLabels(
+  source: PresentColumnValuesSource,
+): Promise<Record<string, string>> {
+  const [column] = await new PFrameImpl(source.frame).listColumns();
+  if (column === undefined) return {};
+  const { axesData, data } = await getSingleColumnData(source.frame, column.columnId);
+  const [sampleIds] = Object.values(axesData);
+  return pairSampleLabels(sampleIds ?? [], data);
 }
 
 /**
@@ -138,7 +159,7 @@ function binScoreCell(entry: {
   <PlBtnGhost @click.stop="isOpen = true">
     Statistics
     <template #append>
-      <PlIcon24 name="statistics" />
+      <PlMaskIcon24 name="statistics" />
     </template>
   </PlBtnGhost>
 

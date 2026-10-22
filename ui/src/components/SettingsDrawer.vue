@@ -14,6 +14,7 @@
 import { BASELINE_AVAILABLE } from "@platforma-open/milaboratories.sort-seq-analysis.model";
 import type { ColumnUniversalId, ColumnValueId, ColumnValueOption } from "@platforma-sdk/model";
 import { columnValueLabel } from "@platforma-sdk/model";
+import type { ColumnValueOptionsState } from "@platforma-sdk/ui-vue";
 import {
   PlAccordion,
   PlAccordionSection,
@@ -23,7 +24,7 @@ import {
   PlCheckbox,
   PlElementList,
   PlDropdownMulti,
-  PlIcon24,
+  PlMaskIcon24,
   PlNumberField,
   PlSlideModal,
   PlTooltip,
@@ -31,6 +32,7 @@ import {
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
+import { useColumnValueStates } from "../useColumnValueStates";
 
 const app = useApp();
 
@@ -41,23 +43,54 @@ const armsOpen = ref(true);
 // Open state belongs to the parent, which mounts this beside the button that opens it.
 const isOpen = defineModel<boolean>({ required: true });
 
+/** The values of every metadata column on offer and of the picked ones, by column. */
+const valueStates = useColumnValueStates(() => app.model.outputs.metadataValueSources);
+
 /**
- * Values of a metadata column, as the model read them. `undefined` while they are not known, so
- * picks are not marked as not available before the model has caught up.
+ * How far the values of a metadata column are read. `undefined` while no column is picked;
+ * loading until the model gives a source for it.
  */
-function valueOptionsOf(column: ColumnUniversalId | undefined): ColumnValueOption[] | undefined {
+function valueStateOf(column: ColumnUniversalId | undefined): ColumnValueOptionsState | undefined {
   if (column === undefined) return undefined;
-  return app.model.outputs.metadataValues?.find((entry) => entry.column === column)?.options;
+  return valueStates.value.get(column) ?? { type: "loading" };
 }
 
-/** The values of a column, in the order the model offers them. */
+/**
+ * Values of a metadata column as options of a value picker. `undefined` while they are not
+ * known, so picks are not marked as not available before they are read. None for a column that
+ * is gone, so every pick of it is.
+ */
+function valueOptionsOf(
+  state: ColumnValueOptionsState | undefined,
+): ColumnValueOption[] | undefined {
+  if (state?.type === "read") return state.options;
+  if (state?.type === "absent") return [];
+  return undefined;
+}
+
+/** Why a picked column offers no values, shown under the control that picks it. */
+function valuesProblemOf(state: ColumnValueOptionsState | undefined): string | undefined {
+  if (state?.type === "absent") {
+    return "The column is no longer produced by its block, so it has no values to pick";
+  }
+  if (state?.type === "failed") {
+    return `The values of the column could not be read: ${state.message}`;
+  }
+  return undefined;
+}
+
+/** The values of a column, in natural order, as far as they are read now. */
 function valuesOf(column: ColumnUniversalId | undefined): ColumnValueId[] {
-  return (valueOptionsOf(column) ?? []).map((option) => option.value);
+  return (valueOptionsOf(valueStateOf(column)) ?? []).map((option) => option.value);
 }
 
-const conditionValueOptions = computed(() => valueOptionsOf(app.model.data.conditionColumnRef));
+const conditionValueState = computed(() => valueStateOf(app.model.data.conditionColumnRef));
 
-const gateValueOptions = computed(() => valueOptionsOf(app.model.data.gateColumnRef));
+const gateValueState = computed(() => valueStateOf(app.model.data.gateColumnRef));
+
+const conditionValueOptions = computed(() => valueOptionsOf(conditionValueState.value));
+
+const gateValueOptions = computed(() => valueOptionsOf(gateValueState.value));
 
 /** `undefined` means ordered, which is the ordinary case and every block made before this. */
 const gatesOrdered = computed({
@@ -176,7 +209,7 @@ function setGateColumn(ref: ColumnUniversalId | undefined) {
     <!-- 1. The anchor. Until one is picked, no other input has an option list. -->
     <PlDropdown
       :model-value="app.model.data.abundanceRef"
-      :options="app.model.outputs.abundanceOptions"
+      :options="app.model.outputs.abundanceOptions ?? []"
       label="Select dataset"
       required
       clearable
@@ -190,8 +223,9 @@ function setGateColumn(ref: ColumnUniversalId | undefined) {
     <!-- Together because picking the column is what populates the list. -->
     <PlDropdown
       :model-value="app.model.data.gateColumnRef"
-      :options="app.model.outputs.gateOptions"
+      :options="app.model.outputs.gateOptions ?? []"
       label="Gate column"
+      :error="valuesProblemOf(gateValueState)"
       required
       clearable
       @update:model-value="setGateColumn"
@@ -239,7 +273,7 @@ function setGateColumn(ref: ColumnUniversalId | undefined) {
         <PlBtnGhost v-if="gateOrderModified" @click="resetGateOrder">
           Reset to default
           <template #append>
-            <PlIcon24 name="reverse" />
+            <PlMaskIcon24 name="reverse" />
           </template>
         </PlBtnGhost>
       </PlAccordionSection>
@@ -256,8 +290,9 @@ function setGateColumn(ref: ColumnUniversalId | undefined) {
         <!-- The factor column and its exclusions, together. -->
         <PlDropdown
           :model-value="app.model.data.conditionColumnRef"
-          :options="app.model.outputs.conditionOptions"
+          :options="app.model.outputs.conditionOptions ?? []"
           label="Factor column"
+          :error="valuesProblemOf(conditionValueState)"
           required
           clearable
           @update:model-value="setConditionColumn"
@@ -270,6 +305,7 @@ function setGateColumn(ref: ColumnUniversalId | undefined) {
         <PlDropdownMulti
           v-model="app.model.data.excludedConditions"
           :options="conditionValueOptions"
+          :disabled="conditionValueState?.type === 'failed'"
           label="Exclude factors"
         >
           <template #tooltip>
@@ -311,7 +347,7 @@ function setGateColumn(ref: ColumnUniversalId | undefined) {
     <PlAccordionSection label="Advanced Settings">
       <PlDropdown
         v-model="app.model.data.sortFractionColumnRef"
-        :options="app.model.outputs.sortFractionOptions"
+        :options="app.model.outputs.sortFractionOptions ?? []"
         label="Sort-fraction column"
         clearable
       >
