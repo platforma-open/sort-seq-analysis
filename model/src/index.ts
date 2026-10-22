@@ -30,7 +30,7 @@ export * from "./columns";
 export * from "./types";
 export type { ColumnPickerOption } from "./column_access";
 export { pairSampleLabels } from "./metadata";
-export type { SampleLabelCell } from "./metadata";
+export type { ColumnFrame, PresentColumnFrame, SampleLabelCell } from "./metadata";
 
 /**
  * Whether the baseline is offered. Pairs with `EMIT_BASELINE_COLUMNS` in

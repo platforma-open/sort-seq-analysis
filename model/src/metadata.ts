@@ -1,5 +1,10 @@
-import type { ColumnUniversalId, ColumnValuesSource, RenderCtxBase } from "@platforma-sdk/model";
-import { createColumnValuesSource, deriveColumnOptions } from "@platforma-sdk/model";
+import type {
+  ColumnUniversalId,
+  PFrameHandle,
+  PObjectId,
+  RenderCtxBase,
+} from "@platforma-sdk/model";
+import { ColumnRecipe, deriveColumnOptions, extractPObjectId } from "@platforma-sdk/model";
 import type { ColumnPickerOption } from "./column_access";
 import { axisSelector, findColumn, resultPool } from "./column_access";
 import { metadataSelector, sampleLabelSelector } from "./columns";
@@ -10,6 +15,25 @@ export type MetadataRole = "conditionColumnRef" | "gateColumnRef" | "sortFractio
 
 /** The column picked for each role. */
 export type MetadataPicks = Pick<BlockData, MetadataRole>;
+
+/**
+ * Where the UI reads the values of a column from: a frame of the column alone, while the column
+ * is there. `column` is the column the frame was made for, so the UI can tell one that still
+ * describes an earlier pick; `frameColumn` is the column as the frame holds it.
+ */
+export type ColumnFrame =
+  | { readonly type: "resolving"; readonly column: ColumnUniversalId }
+  /** The column is gone: a stored id may name a column its upstream block no longer produces. */
+  | { readonly type: "absent"; readonly column: ColumnUniversalId }
+  | {
+      readonly type: "present";
+      readonly column: ColumnUniversalId;
+      readonly frame: PFrameHandle;
+      readonly frameColumn: PObjectId;
+    };
+
+/** A frame of a column that is there to read. */
+export type PresentColumnFrame = Extract<ColumnFrame, { type: "present" }>;
 
 /**
  * Sample-metadata columns of upstream blocks whose only axis is the dataset's sample axis
@@ -60,7 +84,7 @@ export function getMetadataValueSources(
   ctx: RenderCtxBase,
   abundanceRef: ColumnUniversalId,
   picks: MetadataPicks,
-): ColumnValuesSource[] | undefined {
+): ColumnFrame[] | undefined {
   const options = getMetadataOptions(ctx, abundanceRef);
   if (options === undefined) return undefined;
 
@@ -68,7 +92,7 @@ export function getMetadataValueSources(
   for (const picked of [picks.conditionColumnRef, picks.gateColumnRef]) {
     if (picked !== undefined) columns.add(picked);
   }
-  return [...columns].map((column) => createColumnValuesSource(ctx, column));
+  return [...columns].map((column) => columnFrame(ctx, column));
 }
 
 /**
@@ -78,7 +102,7 @@ export function getMetadataValueSources(
 export function getSampleLabelSource(
   ctx: RenderCtxBase,
   abundanceRef: ColumnUniversalId,
-): ColumnValuesSource | undefined {
+): ColumnFrame | undefined {
   const sampleAxis = findColumn(ctx, abundanceRef)?.getSpec().axesSpec[0];
   if (sampleAxis === undefined) return undefined;
 
@@ -92,7 +116,7 @@ export function getSampleLabelSource(
     })
     .getColumns();
   if (column === undefined) return undefined;
-  return createColumnValuesSource(ctx, column.id);
+  return columnFrame(ctx, column.id);
 }
 
 /**
@@ -123,3 +147,13 @@ const METADATA_ROLES: readonly MetadataRole[] = [
   "gateColumnRef",
   "sortFractionColumnRef",
 ];
+
+/** A frame of `column` alone, while the column and its frame are there. */
+function columnFrame(ctx: RenderCtxBase, column: ColumnUniversalId): ColumnFrame {
+  const status = ColumnRecipe.getStatus(column, { ctx: ctx.ctx });
+  if (status !== "present") return { type: status, column };
+  const frame = ctx.createPFrame([column]);
+  if (frame === undefined) return { type: "resolving", column };
+  // The frame holds a column by the bare id of its leaf.
+  return { type: "present", column, frame, frameColumn: extractPObjectId(column) };
+}

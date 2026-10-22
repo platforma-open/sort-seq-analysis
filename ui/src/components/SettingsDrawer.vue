@@ -14,7 +14,6 @@
 import { BASELINE_AVAILABLE } from "@platforma-open/milaboratories.sort-seq-analysis.model";
 import type { ColumnUniversalId, ColumnValueId, ColumnValueOption } from "@platforma-sdk/model";
 import { columnValueLabel } from "@platforma-sdk/model";
-import type { ColumnValueOptionsState } from "@platforma-sdk/ui-vue";
 import {
   PlAccordion,
   PlAccordionSection,
@@ -32,6 +31,7 @@ import {
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
+import type { ColumnValueOptionsState } from "../useColumnValueStates";
 import { useColumnValueStates } from "../useColumnValueStates";
 
 const app = useApp();
