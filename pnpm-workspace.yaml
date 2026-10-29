@@ -7,13 +7,13 @@ packages:
   - ui
   - workflow
 catalog:
-  "@platforma-sdk/model": 1.84.3
-  "@platforma-sdk/ui-vue": 1.84.5
-  "@platforma-sdk/workflow-tengo": 6.12.1
-  "@platforma-sdk/test": 1.84.6
-  "@platforma-sdk/block-tools": 2.16.6
-  "@platforma-sdk/tengo-builder": 4.1.6
-  "@platforma-sdk/package-builder": 3.16.0
+  "@platforma-sdk/model": 1.85.0
+  "@platforma-sdk/ui-vue": 1.85.0
+  "@platforma-sdk/workflow-tengo": 6.16.0
+  "@platforma-sdk/test": 1.85.1
+  "@platforma-sdk/block-tools": 2.16.14
+  "@platforma-sdk/tengo-builder": 4.1.11
+  "@platforma-sdk/package-builder": 3.16.1
   "@milaboratories/ts-builder": 1.7.2
   "@milaboratories/ts-configs": 1.4.0
   # `structure init` (block-tools 2.12.11) writes `"typescript": "catalog:"` into

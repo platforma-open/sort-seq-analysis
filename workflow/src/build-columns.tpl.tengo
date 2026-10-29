@@ -105,10 +105,12 @@ self.body(func(inputs) {
 			label: alphabet == "nucleotide" ? "NT Variants" : "AA Variants"
 		}
 	}
+	// A subset run roots the trace in the filter (dataset -> the block that made the subset).
+	traceSpec := is_undefined(inputs.traceSpec) ? inputs.abundanceSpec : inputs.traceSpec
 	// For the per-parent columns, which have no twin at the other level.
-	trace := pSpec.makeTrace(inputs.abundanceSpec, blockStep)
-	measuredTrace := pSpec.makeTrace(inputs.abundanceSpec, blockStep, levelStep(measuredAlphabet))
-	proteinTrace := pSpec.makeTrace(inputs.abundanceSpec, blockStep, levelStep("aminoacid"))
+	trace := pSpec.makeTrace(traceSpec, blockStep)
+	measuredTrace := pSpec.makeTrace(traceSpec, blockStep, levelStep(measuredAlphabet))
+	proteinTrace := pSpec.makeTrace(traceSpec, blockStep, levelStep("aminoacid"))
 
 	// For the columns read against the baseline. Claimed ONLY when it resolved. The plain
 	// enrichment is always against the input, so it says "input" whatever the baseline: naming
@@ -138,8 +140,12 @@ self.body(func(inputs) {
 		// order-guaranteed — an unsorted loop gives a CIDConflictError on re-render.
 		for key in maps.getKeys(imported) {
 			ll.assert(is_undefined(target[key]), "duplicate pframe entry key: %v", key)
+			spec := entryTrace.inject(imported[key].spec)
+			if !is_undefined(inputs.subset) {
+				spec.domain["pl7.app/inputSubset"] = inputs.subset
+			}
 			target[key] = {
-				spec: entryTrace.inject(imported[key].spec),
+				spec: spec,
 				data: imported[key].data
 			}
 		}
