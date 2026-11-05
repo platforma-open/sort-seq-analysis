@@ -236,11 +236,7 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
    * snapshotted and the gate order seeded in the same gesture as the column pick, and the picked
    * gates, input and excluded conditions be shown by the values they pick.
    */
-  .output("metadataValueSources", (ctx) => {
-    const abundanceRef = ctx.data.abundanceRef;
-    if (abundanceRef === undefined) return undefined;
-    return getMetadataValueSources(abundanceRef, ctx.data);
-  })
+  .output("metadataValueSources", (ctx) => getMetadataValueSources(ctx.data.abundanceRef, ctx.data))
 
   /** Sample names by sample id, for the pooling report's sample ids. */
   .output("sampleLabels", (ctx) => {

@@ -54,19 +54,17 @@ export function narrowToRole(
  * condition and gate columns: one value-options model per column.
  *
  * Every offered column rather than the picked ones: a column's values are snapshotted, and the
- * gate order seeded, in the same gesture as the pick, so they must be in hand before it.
- *
- * `undefined` while the metadata options are. A picked column that is gone has an `absent`
- * model, so its picks show as not available.
+ * gate order seeded, in the same gesture as the pick, so they must be in hand before it. The
+ * offered columns are those on the dataset's sample axis, so none are offered while the dataset
+ * is not picked or still resolving; the picked columns are read regardless, so their picks show
+ * as not available once a picked column is gone or lacks them.
  */
 export function getMetadataValueSources(
-  abundanceRef: ColumnUniversalId,
+  abundanceRef: ColumnUniversalId | undefined,
   picks: MetadataPicks,
-): ColumnValueOptionsModel[] | undefined {
-  const options = getMetadataOptions(abundanceRef);
-  if (options === undefined) return undefined;
-
-  const columns = new Set(options.map((option) => option.value));
+): ColumnValueOptionsModel[] {
+  const offered = abundanceRef === undefined ? [] : (getMetadataOptions(abundanceRef) ?? []);
+  const columns = new Set(offered.map((option) => option.value));
   for (const picked of [picks.conditionColumnRef, picks.gateColumnRef]) {
     if (picked !== undefined) columns.add(picked);
   }
