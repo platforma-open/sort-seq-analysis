@@ -11,9 +11,12 @@ import type { BlockData } from "./types";
 
 const callbackRegistry: Record<string, (storageJson: string) => unknown> = {};
 
+/** The model, loaded once the render context it registers its callbacks in exists. */
+let model: typeof import("./index");
+
 beforeAll(async () => {
   Object.assign(globalThis, { cfgRenderCtx: { callbackRegistry } });
-  await import("./index");
+  model = await import("./index");
 });
 
 const dataset = createGlobalPObjectId("mixcr", "abundance");
@@ -21,6 +24,7 @@ const condition = createGlobalPObjectId("samples", "metadata.condition");
 const gate = createGlobalPObjectId("samples", "metadata.gate");
 const fraction = createGlobalPObjectId("samples", "metadata.fraction");
 const other = createGlobalPObjectId("samples", "metadata.other");
+const subset = createGlobalPObjectId("labeling", "lead");
 
 const gateValue = (value: string) => createColumnValueId({ column: gate, value });
 const conditionValue = (value: string) => createColumnValueId({ column: condition, value });
@@ -56,6 +60,22 @@ describe("args issues", () => {
       },
       issues: [],
     });
+  });
+
+  test("view state and value snapshots stay out of the args", () => {
+    const result = deriveArgs(configured);
+    expect(result).not.toHaveProperty("value.resultsTableState");
+    expect(result).not.toHaveProperty("value.gateValues");
+  });
+
+  test("the subset goes to the args as the input filter", () => {
+    expect(deriveArgs({ ...configured, filterRef: subset })).toMatchObject({
+      value: { inputFilter: subset },
+    });
+  });
+
+  test("an unfiltered block has no input filter", () => {
+    expect(deriveArgs(configured)).not.toHaveProperty("value.inputFilter");
   });
 
   test("a fresh block gets one complaint per unmade pick, and its args still derive", () => {
@@ -98,6 +118,16 @@ describe("args issues", () => {
       why: "no gate column",
       data: { ...configured, gateColumnRef: undefined },
       message: "Select the gate column",
+    },
+    {
+      why: "the gate column is also the condition column",
+      data: {
+        ...configured,
+        conditionColumnRef: gate,
+        excludedConditions: [],
+        conditionValues: [],
+      },
+      message: "The condition, gate and sort-fraction columns must be three different columns",
     },
     {
       why: "one column in two roles",
@@ -193,6 +223,22 @@ describe("args issues", () => {
     expect(
       deriveArgs({ ...configured, excludedConditions: [], sortFractionColumnRef: undefined }),
     ).toMatchObject({ issues: [] });
+  });
+
+  test("a gate value left out of the order is an ordinary run, not an issue", () => {
+    expect(deriveArgs({ ...configured, gateOrder: [gateValue("HIGH")] })).toMatchObject({
+      issues: [],
+    });
+  });
+});
+
+describe("the subtitle", () => {
+  test("names the gate column and every gate in order, by value", () => {
+    expect(model.deriveBlockLabel(configured)).toBe("Gate: NEG-HIGH");
+  });
+
+  test("asks for gates until some are ordered", () => {
+    expect(model.deriveBlockLabel({ ...configured, gateOrder: [] })).toBe("Select gates");
   });
 });
 

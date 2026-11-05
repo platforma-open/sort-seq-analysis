@@ -43,6 +43,19 @@ describe("Ver_2026_10_21 migration", () => {
     expect(data.abundanceRef).toBe(dataset);
   });
 
+  test("a subset picked with the dataset becomes its result-pool id", () => {
+    const subsetRef = { __isRef: true, blockId: "labeling", name: "lead" };
+    const migrated = blockDataModel.migrate({
+      version: "Ver_2026_09_21",
+      data: { ...storedAtV2, filterRef: subsetRef },
+    });
+    expect(migrated.data.filterRef).toBe(createGlobalPObjectId("labeling", "lead"));
+  });
+
+  test("a dataset without a subset stays without one", () => {
+    expect(data.filterRef).toBeUndefined();
+  });
+
   test("the anchored condition, gate and sort-fraction columns are reset", () => {
     expect(data.conditionColumnRef).toBeUndefined();
     expect(data.gateColumnRef).toBeUndefined();
