@@ -22,7 +22,6 @@ pframes := import("@platforma-sdk/workflow-tengo:pframes")
 render := import("@platforma-sdk/workflow-tengo:render")
 canonical := import("@platforma-sdk/workflow-tengo:canonical")
 columnValue := import("@platforma-sdk/workflow-tengo:workflow.column-value")
-ll := import("@platforma-sdk/workflow-tengo:ll")
 json := import("json")
 
 scoreSw := assets.importSoftware("@platforma-open/milaboratories.sort-seq-analysis.software:main")
@@ -45,15 +44,6 @@ DISTRIBUTION_FILE_REGEX := "^dist_.*\\.tsv$"
 // `score_` name.
 BASELINE_FILE_REGEX := "^baseline_.*\\.tsv$"
 
-// The ref a result-pool column id names: the block and output it was taken from.
-columnIdToRef := func(id) {
-	ref := json.decode(id)
-	if !is_map(ref) || ref.__isRef != true {
-		ll.panic("expected a result-pool column id, got %v", id)
-	}
-	return ref
-}
-
 // The plain value a column value id carries, as text: the computation compares gate and
 // condition values with the cells of the reads table, which carries them as text, numeric
 // values too.
@@ -66,9 +56,9 @@ wf.prepare(func(args) {
 	bb.ignoreMissingDomains()
 
 	// The anchor: every other input resolves against it, so columns cannot be mixed across runs.
-	// It arrives as a result-pool column id; the anchored queries below bind their axes to it
-	// by the name "main".
-	bb.addAnchor("main", columnIdToRef(args.abundanceRef))
+	// It arrives as a result-pool column id, the canonical JSON of the ref to the upstream
+	// output; the anchored queries below bind their axes to it by the name "main".
+	bb.addAnchor("main", json.decode(args.abundanceRef))
 
 	// One predicate, one option list, three independent picks: no spec predicate can tell which
 	// role a metadata column plays, so the user assigns them. Each arrives as a result-pool
@@ -128,7 +118,7 @@ wf.prepare(func(args) {
 
 	// Optional subset column picked alongside the dataset (PlDatasetSelector)
 	if !is_undefined(args.inputFilter) {
-		bb.addRef(columnIdToRef(args.inputFilter))
+		bb.addRef(json.decode(args.inputFilter))
 	}
 
 	// Full await (spec and data) delays this block's spec emission, but the body exports these
@@ -162,7 +152,7 @@ wf.body(func(args) {
 	// filter so downstream labels name it.
 	filterColumn := undefined
 	if !is_undefined(args.inputFilter) {
-		f := columns.getColumn(columnIdToRef(args.inputFilter))
+		f := columns.getColumn(json.decode(args.inputFilter))
 		filterColumn = { spec: f.spec, data: f.data }
 	}
 
