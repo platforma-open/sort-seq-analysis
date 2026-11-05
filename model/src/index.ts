@@ -241,7 +241,7 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
   .output("metadataValueSources", (ctx) => {
     const abundanceRef = ctx.data.abundanceRef;
     if (abundanceRef === undefined) return undefined;
-    return getMetadataValueSources(ctx, abundanceRef, ctx.data);
+    return getMetadataValueSources(abundanceRef, ctx.data);
   })
 
   /** Where the UI reads the sample names from, for the pooling report's sample ids. */

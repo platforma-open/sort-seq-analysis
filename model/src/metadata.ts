@@ -1,10 +1,16 @@
 import type {
   ColumnUniversalId,
+  ColumnValueOptionsModel,
   PFrameHandle,
   PObjectId,
   RenderCtxBase,
 } from "@platforma-sdk/model";
-import { ColumnRecipe, deriveColumnOptions, extractPObjectId } from "@platforma-sdk/model";
+import {
+  ColumnRecipe,
+  createColumnValueOptions,
+  deriveColumnOptions,
+  extractPObjectId,
+} from "@platforma-sdk/model";
 import type { ColumnPickerOption } from "./column_access";
 import { axisSelector, findColumn, resultPool } from "./column_access";
 import { metadataSelector, sampleLabelSelector } from "./columns";
@@ -71,19 +77,18 @@ export function narrowToRole(
 
 /**
  * Where the UI reads the values of every offered sample-metadata column and of the picked
- * condition and gate columns: one source per column, each a frame of that column alone.
+ * condition and gate columns: one value-options model per column.
  *
  * Every offered column rather than the picked ones: a column's values are snapshotted, and the
  * gate order seeded, in the same gesture as the pick, so they must be in hand before it.
  *
  * `undefined` while the metadata options are. A picked column that is gone has an `absent`
- * source, so its picks show as not available.
+ * model, so its picks show as not available.
  */
 export function getMetadataValueSources(
-  ctx: RenderCtxBase,
   abundanceRef: ColumnUniversalId,
   picks: MetadataPicks,
-): ColumnFrame[] | undefined {
+): ColumnValueOptionsModel[] | undefined {
   const options = getMetadataOptions(abundanceRef);
   if (options === undefined) return undefined;
 
@@ -91,7 +96,7 @@ export function getMetadataValueSources(
   for (const picked of [picks.conditionColumnRef, picks.gateColumnRef]) {
     if (picked !== undefined) columns.add(picked);
   }
-  return [...columns].map((column) => columnFrame(ctx, column));
+  return [...columns].map((valueColumn) => createColumnValueOptions({ valueColumn }));
 }
 
 /**
