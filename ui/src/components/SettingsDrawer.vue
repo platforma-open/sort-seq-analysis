@@ -33,7 +33,7 @@ import {
   PlElementList,
   PlDatasetSelector,
   PlDropdownMulti,
-  PlMaskIcon24,
+  PlIcon24,
   PlNumberField,
   PlSlideModal,
   PlTooltip,
@@ -296,7 +296,7 @@ function setGateColumn(ref: ColumnUniversalId | undefined) {
         <PlBtnGhost v-if="gateOrderModified" @click="resetGateOrder">
           Reset to default
           <template #append>
-            <PlMaskIcon24 name="reverse" />
+            <PlIcon24 name="reverse" />
           </template>
         </PlBtnGhost>
       </PlAccordionSection>
