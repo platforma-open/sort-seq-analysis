@@ -1,6 +1,6 @@
 import { assertParamsObject, defineBlockKind } from "@platforma-sdk/block-kind";
 import type { ColumnUniversalId, ColumnValueId } from "@platforma-sdk/model";
-import { isColumnUniversalId, isColumnValueId } from "@platforma-sdk/model";
+import { isColumnValueId, isGlobalPObjectId } from "@platforma-sdk/model";
 import { name, version } from "../package.json" with { type: "json" };
 
 /**
@@ -99,13 +99,14 @@ function parseInitializationParams(value: unknown): BlockParams {
 }
 
 /**
- * Any result-pool column id form is accepted — a leaf, filtered, discovered or overridden one.
- * An id anchored against the dataset names no producing block and is refused.
+ * A metadata column of another block: the pickers offer upstream outputs only, so the
+ * result-pool id of one is the only column id a template can carry. An id anchored against the
+ * dataset names no producing block and is refused.
  */
 function optionalColumnRef(value: unknown, field: string): ColumnUniversalId | undefined {
   if (value === undefined) return undefined;
-  if (!isColumnUniversalId(value)) {
-    throw new Error(`'${field}' must be a metadata column, written as a column id.`);
+  if (!isGlobalPObjectId(value)) {
+    throw new Error(`'${field}' must be a metadata column, written as ${OUTPUT_ID}.`);
   }
   return value;
 }
@@ -127,3 +128,5 @@ function optionalString(value: unknown, field: string): string | undefined {
   if (typeof value !== "string") throw new Error(`'${field}' must be a string.`);
   return value;
 }
+
+const OUTPUT_ID = "the result-pool id of another block's output";
