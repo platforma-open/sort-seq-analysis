@@ -150,7 +150,7 @@ export type GateCollected = {
 export type PooledGroup = {
   condition: string;
   gate: string;
-  /** Sample **ids**, sorted. The UI resolves them to labels via `sampleLabelSource`. */
+  /** Sample **ids**, sorted. The UI resolves them to labels via `sampleLabels`. */
   samples: string[];
   /** Replicates supplied different fractions and were averaged. Absent when uncorrected. */
   sortFractionsDiffer?: boolean;

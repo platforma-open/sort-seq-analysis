@@ -20,7 +20,7 @@ import type { MetadataRole } from "./metadata";
 import {
   getMetadataOptions,
   getMetadataValueSources,
-  getSampleLabelSource,
+  getSampleLabels,
   narrowToRole,
 } from "./metadata";
 import type { BlockArgs, BlockData, RunManifest } from "./types";
@@ -31,8 +31,6 @@ export { blockDataModel, defaultDistributionGraphState } from "./dataModel";
 export * from "./columns";
 export * from "./types";
 export type { ColumnPickerOption } from "./column_access";
-export { pairSampleLabels } from "./metadata";
-export type { ColumnFrame, PresentColumnFrame, SampleLabelCell } from "./metadata";
 
 /**
  * Whether the baseline is offered. Pairs with `EMIT_BASELINE_COLUMNS` in
@@ -244,11 +242,11 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
     return getMetadataValueSources(abundanceRef, ctx.data);
   })
 
-  /** Where the UI reads the sample names from, for the pooling report's sample ids. */
-  .output("sampleLabelSource", (ctx) => {
+  /** Sample names by sample id, for the pooling report's sample ids. */
+  .output("sampleLabels", (ctx) => {
     const abundanceRef = ctx.data.abundanceRef;
     if (abundanceRef === undefined) return undefined;
-    return getSampleLabelSource(ctx, abundanceRef);
+    return getSampleLabels(abundanceRef);
   })
 
   // ---------------------------------------------------------------------------

@@ -1,15 +1,8 @@
-import type {
-  ColumnUniversalId,
-  ColumnValueOptionsModel,
-  PFrameHandle,
-  PObjectId,
-  RenderCtxBase,
-} from "@platforma-sdk/model";
+import type { ColumnUniversalId, ColumnValueOptionsModel } from "@platforma-sdk/model";
 import {
-  ColumnRecipe,
   createColumnValueOptions,
+  deriveAxisValuesLabels,
   deriveColumnOptions,
-  extractPObjectId,
 } from "@platforma-sdk/model";
 import type { ColumnPickerOption } from "./column_access";
 import { axisSelector, findColumn, resultPool } from "./column_access";
@@ -21,25 +14,6 @@ export type MetadataRole = "conditionColumnRef" | "gateColumnRef" | "sortFractio
 
 /** The column picked for each role. */
 export type MetadataPicks = Pick<BlockData, MetadataRole>;
-
-/**
- * Where the UI reads the values of a column from: a frame of the column alone, while the column
- * is there. `column` is the column the frame was made for, so the UI can tell one that still
- * describes an earlier pick; `frameColumn` is the column as the frame holds it.
- */
-export type ColumnFrame =
-  | { readonly type: "resolving"; readonly column: ColumnUniversalId }
-  /** The column is gone: a stored id may name a column its upstream block no longer produces. */
-  | { readonly type: "absent"; readonly column: ColumnUniversalId }
-  | {
-      readonly type: "present";
-      readonly column: ColumnUniversalId;
-      readonly frame: PFrameHandle;
-      readonly frameColumn: PObjectId;
-    };
-
-/** A frame of a column that is there to read. */
-export type PresentColumnFrame = Extract<ColumnFrame, { type: "present" }>;
 
 /**
  * Sample-metadata columns of upstream blocks whose only axis is the dataset's sample axis
@@ -100,49 +74,20 @@ export function getMetadataValueSources(
 }
 
 /**
- * Where the UI reads the sample names from: a frame of the label column of the dataset's sample
- * axis alone. `undefined` while the dataset or its label column is not known.
+ * Sample names by sample id, from the label column of the dataset's sample axis. `undefined`
+ * while the dataset is not known.
  */
-export function getSampleLabelSource(
-  ctx: RenderCtxBase,
+export function getSampleLabels(
   abundanceRef: ColumnUniversalId,
-): ColumnFrame | undefined {
+): Record<string | number, string> | undefined {
   const sampleAxis = findColumn(abundanceRef)?.getSpec().axesSpec[0];
   if (sampleAxis === undefined) return undefined;
 
-  const [column] = resultPool()
-    .filter({
-      include: {
-        ...sampleLabelSelector,
-        axes: [axisSelector(sampleAxis)],
-        partialAxesMatch: false,
-      },
-    })
-    .getColumns();
-  if (column === undefined) return undefined;
-  return columnFrame(ctx, column.id);
+  const labelColumns = resultPool().filter({
+    include: { ...sampleLabelSelector, axes: [axisSelector(sampleAxis)], partialAxesMatch: false },
+  });
+  return deriveAxisValuesLabels(labelColumns)(sampleAxis);
 }
-
-/**
- * Sample names by sample id, from the rows of the label column: `sampleIds[i]` is the key of the
- * row whose label is `labels[i]`. A row missing either is left out.
- */
-export function pairSampleLabels(
-  sampleIds: readonly SampleLabelCell[],
-  labels: readonly SampleLabelCell[],
-): Record<string, string> {
-  const pairs: Record<string, string> = {};
-  for (const [index, sampleId] of sampleIds.entries()) {
-    const label = labels[index];
-    if (sampleId !== null && label !== null && label !== undefined) {
-      pairs[String(sampleId)] = String(label);
-    }
-  }
-  return pairs;
-}
-
-/** One cell of the label column as a frame reads it: a key or a label, `null` where missing. */
-export type SampleLabelCell = string | number | null;
 
 // Internals
 
@@ -151,13 +96,3 @@ const METADATA_ROLES: readonly MetadataRole[] = [
   "gateColumnRef",
   "sortFractionColumnRef",
 ];
-
-/** A frame of `column` alone, while the column and its frame are there. */
-function columnFrame(ctx: RenderCtxBase, column: ColumnUniversalId): ColumnFrame {
-  const status = ColumnRecipe.getStatus(column);
-  if (status !== "present") return { type: status, column };
-  const frame = ctx.createPFrame([column]);
-  if (frame === undefined) return { type: "resolving", column };
-  // The frame holds a column by the bare id of its leaf.
-  return { type: "present", column, frame, frameColumn: extractPObjectId(column) };
-}
