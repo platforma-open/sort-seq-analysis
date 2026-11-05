@@ -3,7 +3,7 @@ import { kind } from "@platforma-open/milaboratories.sort-seq-analysis.kind";
 import {
   createPlDataTableStateV2,
   DataModelBuilder,
-  isColumnUniversalId,
+  isGlobalPObjectId,
   isColumnValueId,
 } from "@platforma-sdk/model";
 import { toColumnId } from "./abundance";
@@ -70,7 +70,7 @@ export const blockDataModel = new DataModelBuilder({ kind })
  * columns; the next pick of a column writes its snapshot again.
  */
 function toColumnIds(data: BlockDataV2): BlockData {
-  const column = (stored: string | undefined) => (isColumnUniversalId(stored) ? stored : undefined);
+  const column = (stored: string | undefined) => (isGlobalPObjectId(stored) ? stored : undefined);
   const value = (picked: string | undefined) => (isColumnValueId(picked) ? picked : undefined);
   const conditionColumnRef = column(data.conditionColumnRef);
   const gateColumnRef = column(data.gateColumnRef);
