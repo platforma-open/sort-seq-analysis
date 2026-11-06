@@ -19,6 +19,7 @@ import {
   distributionPlotTitle,
 } from "@platforma-open/milaboratories.sort-seq-analysis.model";
 import type { AxisSpec } from "@platforma-sdk/model";
+import { columnValueLabel } from "@platforma-sdk/model";
 import { PlAlert } from "@platforma-sdk/ui-vue";
 import { computed, watch } from "vue";
 import { useApp } from "../app";
@@ -88,6 +89,9 @@ const gateAxis = computed((): AxisSpec | undefined => {
  * Seeded once, so a user reordering gates in the chart keeps their choice; a gate the snapshot
  * missed is appended by graph-maker rather than lost. Watching the route and `data` rather
  * than an output keeps this clear of the hairpin.
+ *
+ * The gate axis carries the gate values as the run wrote them, as text; the order holds them as
+ * column value ids.
  */
 watch(
   [condition, gateAxis, () => app.model.data.gateOrder],
@@ -106,7 +110,7 @@ watch(
       ...state,
       dataBindAes: {
         ...state.dataBindAes,
-        [key]: createDefaultMapping([...gateOrder], "light"),
+        [key]: createDefaultMapping(gateOrder.map(columnValueLabel), "light"),
       },
     };
   },
