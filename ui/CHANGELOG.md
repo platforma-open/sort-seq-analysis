@@ -1,5 +1,23 @@
 # @platforma-open/milaboratories.sort-seq-analysis.ui
 
+## 2.0.0
+
+### Major Changes
+
+- 04203fc: Columns are stored by their result-pool column ids: the dataset and the condition, gate and sort-fraction columns. The gates of the gate order, the unsorted input and the excluded conditions are stored as column value references of the gate and condition columns, so the block that produced the metadata knows which of its values this block uses; the ranks the workflow receives are keyed by the same references. The model finds columns and builds the options of every column picker through the column collection API instead of the deprecated result pool API, and the workflow takes every column through a column bundle. The model gives the value options of each metadata column on offer, and the settings panel reads the values through them, so a column of any storage format can be picked from; a picked column whose values cannot be read, or that its block no longer produces, says so under its picker. The run statistics take the sample names from the model. The snapshots of the gate and condition columns' values, written when a column is picked, are stored as column value references of that column too.
+  Opening a project created before this change keeps its dataset, and clears its condition, gate and sort-fraction columns, the gate order, the unsorted input, the excluded conditions and the value snapshots, since they were stored by ids anchored to the dataset and as plain values, which name no producing block. The condition and gate columns have to be picked again before the block runs; picking the gate column seeds the gate order with every value of that column, so gates removed from the order before have to be removed again. The sort-fraction column, the unsorted input and the excluded conditions are optional, so the block runs without them: until they are picked again, the scores are not corrected for sort yield, no enrichment against the input is computed and every condition is scored. The initialization params of the kind carry the same ids and references, the value snapshots included, so templates made for an earlier version of the kind cannot be applied.
+  Gates, the input and excluded conditions that are no longer among the values of their column stay selected and are marked as not available instead of being removed silently, with a tooltip naming the block that was to provide them, as a link to it, and what went wrong. Picking another gate or condition column still resets the values picked in it and rewrites its snapshot. No check that disables the run is removed: a gate column with no values, a gate or an input the gate column does not carry, and every condition excluded still disable it.
+
+### Minor Changes
+
+- e12cd79: Update the SDK and accept a subset filter (e.g. a Repertoire Labeling label) with the input dataset. The dataset list is built with buildDatasetOptions (requireEnrichments: false). The subset restricts the reads before the analysis, so gate frequencies, enrichments and mean bins are computed within the subset and differ from a full-data run; if the parent variant is outside the subset, Mean bin vs parent and the wild-type baseline are not produced. Outputs of a subset run carry pl7.app/inputSubset in their domain and a trace rooted in the subset, so their labels name it. Unfiltered runs are unchanged.
+
+### Patch Changes
+
+- Updated dependencies [04203fc]
+- Updated dependencies [e12cd79]
+  - @platforma-open/milaboratories.sort-seq-analysis.model@2.0.0
+
 ## 1.2.1
 
 ### Patch Changes
