@@ -1,5 +1,12 @@
 # @platforma-open/milaboratories.sort-seq-analysis.ui
 
+## 2.0.1
+
+### Patch Changes
+
+- Updated dependencies [fa8d1ec]
+  - @platforma-open/milaboratories.sort-seq-analysis.model@2.0.1
+
 ## 2.0.0
 
 ### Major Changes
