@@ -1,6 +1,6 @@
 import type { GraphMakerState } from "@milaboratories/graph-maker";
 import type { PlDataTableStateV2, PlRef } from "@platforma-sdk/model";
-import type { BaselineOption } from "./types";
+import type { BaselineOption } from "@platforma-open/milaboratories.sort-seq-analysis.kind";
 
 /**
  * Data as stored at `Ver_2026_09_21`: the dataset as a ref to an upstream output, the condition,

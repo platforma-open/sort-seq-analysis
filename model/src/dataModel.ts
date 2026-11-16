@@ -41,6 +41,8 @@ export const blockDataModel = new DataModelBuilder({ kind })
   // projects the same fields back out; the two must name the same set. `params` is optional,
   // so every field keeps a default.
   .init(({ params }) => ({
+    abundanceRef: params?.abundanceRef,
+    filterRef: params?.filterRef,
     conditionColumnRef: params?.conditionColumnRef,
     gateColumnRef: params?.gateColumnRef,
     sortFractionColumnRef: params?.sortFractionColumnRef,
@@ -48,10 +50,16 @@ export const blockDataModel = new DataModelBuilder({ kind })
     gateValues: params?.gateValues ?? [],
     gateColumnLabel: params?.gateColumnLabel,
     conditionValues: params?.conditionValues ?? [],
+    // The two facts and the baseline are absent rather than defaulted: an absent input means
+    // no enrichment, and an absent order flag means ordered.
+    excludedConditions: params?.excludedConditions ?? [],
+    readFloor: params?.readFloor,
+    gatesOrdered: params?.gatesOrdered,
+    inputGate: params?.inputGate,
+    baseline: params?.baseline,
+    baselineSequence: params?.baselineSequence,
 
-    // Not init params — see the kind. The two facts and the baseline are absent rather than
-    // defaulted: an absent input means no enrichment, and an absent order flag means ordered.
-    excludedConditions: [],
+    // Not init params: view state. See the kind.
     customBlockLabel: "",
     resultsTableState: createPlDataTableStateV2(),
     ntResultsTableState: createPlDataTableStateV2(),

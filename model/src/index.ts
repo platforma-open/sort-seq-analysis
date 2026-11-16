@@ -350,6 +350,8 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
    * unrunnable, and making it runnable destroys the ladder.
    */
   .templateParams((data) => ({
+    abundanceRef: data.abundanceRef,
+    filterRef: data.filterRef,
     conditionColumnRef: data.conditionColumnRef,
     gateColumnRef: data.gateColumnRef,
     sortFractionColumnRef: data.sortFractionColumnRef,
@@ -357,6 +359,12 @@ export const platforma = BlockModelV3.create({ dataModel: blockDataModel, kind }
     gateValues: data.gateValues,
     gateColumnLabel: data.gateColumnLabel,
     conditionValues: data.conditionValues,
+    excludedConditions: data.excludedConditions,
+    readFloor: data.readFloor,
+    gatesOrdered: data.gatesOrdered,
+    inputGate: data.inputGate,
+    baseline: data.baseline,
+    baselineSequence: data.baselineSequence,
   }))
 
   /** Constant. What an instance is configured for belongs in the subtitle. */

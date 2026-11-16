@@ -1,4 +1,5 @@
 import type { GraphMakerState } from "@milaboratories/graph-maker";
+import type { BaselineOption } from "@platforma-open/milaboratories.sort-seq-analysis.kind";
 import type { ColumnUniversalId, ColumnValueId, PlDataTableStateV2 } from "@platforma-sdk/model";
 
 /**
@@ -6,9 +7,6 @@ import type { ColumnUniversalId, ColumnValueId, PlDataTableStateV2 } from "@plat
  * named. It is a report, never an input — nothing configures a mode.
  */
 export type RunMode = "gate-ranking" | "enrichment";
-
-/** What a per-gate enrichment is read against. `synonymous` needs the nucleotide grain. */
-export type BaselineOption = "wild-type" | "synonymous" | "sequence";
 
 /**
  * What the workflow consumes. Fields 8-11 are omitted rather than defaulted on a gate-ranking
