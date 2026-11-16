@@ -3,17 +3,27 @@ import type { ColumnUniversalId, ColumnValueId } from "@platforma-sdk/model";
 import { isColumnValueId, isGlobalPObjectId } from "@platforma-sdk/model";
 import { name, version } from "../package.json" with { type: "json" };
 
+/** What a per-gate enrichment is read against. `synonymous` needs the nucleotide grain. */
+export type BaselineOption = "wild-type" | "synonymous" | "sequence";
+
 /**
  * This block's init-params contract — what a creator, or a project template, supplies to seed a
- * new instance. A subset of the model's `BlockData`.
+ * new instance. A subset of the model's `BlockData`: everything the user sets in the drawer.
  *
- * The subset is **the metadata reading of a sort-seq run**: which column says condition, which
- * says gate, which says sort fraction, and what the gate ladder is. A lab that runs the same
- * FACS ladder over library after library pins that once and then only picks the dataset.
+ * - **The dataset** — `abundanceRef`, and `filterRef` when the run is narrowed to a subset of it.
+ * - **The metadata reading** — which column says condition, which says gate, which says sort
+ *   fraction, and what the gate ladder is.
+ * - **The run recipe** — the excluded conditions, the read-count floor, whether the gates are
+ *   ordered, the unsorted input, and the baseline.
  *
- * The three columns are result-pool column ids, each naming the block that produced the column.
- * The gates of the ladder and the two value snapshots are column value ids of their columns:
- * each names the column it was picked from, and through it the block that produced the value.
+ * The dataset, the subset and the three columns are result-pool column ids, each naming the block
+ * that produced the column. The gates of the ladder, the input, the exclusions and the two value
+ * snapshots are column value ids of their columns: each names the column it was picked from, and
+ * through it the block that produced the value. A project template names its blocks, and a block
+ * created from one receives every one of these pointing at the blocks made from the same entries,
+ * so a project made from a template computes what the original one did. A lab that runs the same
+ * FACS ladder over library after library may leave the dataset out of a template and pick it
+ * afterwards.
  *
  * **The three value snapshots are params for a reason that is easy to miss.** `gateValues`,
  * `conditionValues` and `gateColumnLabel` are snapshots the UI writes when a column is picked,
@@ -25,20 +35,15 @@ import { name, version } from "../package.json" with { type: "json" };
  * act of making the block runnable. Carrying the snapshots keeps the template usable on
  * arrival.
  *
- * Left out, and why:
- *
- * - **`abundanceRef`** — the dataset of one project's result pool, picked against the data in
- *   front of you.
- * - **`excludedConditions`, `inputGate` and `readFloor`** — run recipe. They are out because the
- *   operator scoped the contract to the metadata reading; a run's exclusions, its reference and
- *   its floor are decisions taken against the data in front of you.
- * - **View state** — `customBlockLabel`, `resultsTableState`, `distributionGraphStates`. Not
- *   configuration.
+ * Left out: view state — `customBlockLabel`, the table states and `distributionGraphStates`.
+ * Not configuration.
  *
  * Every field is optional. A block may be created with no template at all, so the model's
  * `init` keeps its own default behind each one.
  */
 export type BlockParams = {
+  abundanceRef?: ColumnUniversalId;
+  filterRef?: ColumnUniversalId;
   conditionColumnRef?: ColumnUniversalId;
   gateColumnRef?: ColumnUniversalId;
   sortFractionColumnRef?: ColumnUniversalId;
@@ -46,6 +51,12 @@ export type BlockParams = {
   gateValues?: ColumnValueId[];
   gateColumnLabel?: string;
   conditionValues?: ColumnValueId[];
+  excludedConditions?: ColumnValueId[];
+  readFloor?: number;
+  gatesOrdered?: boolean;
+  inputGate?: ColumnValueId;
+  baseline?: BaselineOption;
+  baselineSequence?: string;
 };
 
 // Identity (`name`/`version`) comes from this package's own `package.json`, so the on-wire
@@ -78,6 +89,8 @@ function parseInitializationParams(value: unknown): BlockParams {
   assertParamsObject(value);
 
   const {
+    abundanceRef,
+    filterRef,
     conditionColumnRef,
     gateColumnRef,
     sortFractionColumnRef,
@@ -85,9 +98,17 @@ function parseInitializationParams(value: unknown): BlockParams {
     gateValues,
     gateColumnLabel,
     conditionValues,
+    excludedConditions,
+    readFloor,
+    gatesOrdered,
+    inputGate,
+    baseline,
+    baselineSequence,
   } = value;
 
   return {
+    abundanceRef: optionalColumnRef(abundanceRef, "abundanceRef", "a dataset"),
+    filterRef: optionalColumnRef(filterRef, "filterRef", "a subset column"),
     conditionColumnRef: optionalColumnRef(conditionColumnRef, "conditionColumnRef"),
     gateColumnRef: optionalColumnRef(gateColumnRef, "gateColumnRef"),
     sortFractionColumnRef: optionalColumnRef(sortFractionColumnRef, "sortFractionColumnRef"),
@@ -95,18 +116,37 @@ function parseInitializationParams(value: unknown): BlockParams {
     gateValues: optionalValueList(gateValues, "gateValues"),
     gateColumnLabel: optionalString(gateColumnLabel, "gateColumnLabel"),
     conditionValues: optionalValueList(conditionValues, "conditionValues"),
+    excludedConditions: optionalValueList(excludedConditions, "excludedConditions"),
+    readFloor: optionalNumber(readFloor, "readFloor"),
+    gatesOrdered: optionalBoolean(gatesOrdered, "gatesOrdered"),
+    inputGate: optionalValue(inputGate, "inputGate"),
+    baseline: optionalEnum(baseline, BASELINE_OPTIONS, "baseline"),
+    baselineSequence: optionalString(baselineSequence, "baselineSequence"),
   };
 }
 
 /**
- * A metadata column of another block: the pickers offer upstream outputs only, so the
- * result-pool id of one is the only column id a template can carry. An id anchored against the
- * dataset names no producing block and is refused.
+ * A column of another block: the pickers offer upstream outputs only, so the result-pool id of
+ * one is the only column id a template can carry. An id anchored against the dataset names no
+ * producing block and is refused.
  */
-function optionalColumnRef(value: unknown, field: string): ColumnUniversalId | undefined {
+function optionalColumnRef(
+  value: unknown,
+  field: string,
+  what = "a metadata column",
+): ColumnUniversalId | undefined {
   if (value === undefined) return undefined;
   if (!isGlobalPObjectId(value)) {
-    throw new Error(`'${field}' must be a metadata column, written as ${OUTPUT_ID}.`);
+    throw new Error(`'${field}' must be ${what}, written as ${OUTPUT_ID}.`);
+  }
+  return value;
+}
+
+/** One picked value of a column, written as a column value id; a plain value is refused. */
+function optionalValue(value: unknown, field: string): ColumnValueId | undefined {
+  if (value === undefined) return undefined;
+  if (!isColumnValueId(value)) {
+    throw new Error(`'${field}' must be a column value, written as a column value id.`);
   }
   return value;
 }
@@ -128,5 +168,33 @@ function optionalString(value: unknown, field: string): string | undefined {
   if (typeof value !== "string") throw new Error(`'${field}' must be a string.`);
   return value;
 }
+
+function optionalNumber(value: unknown, field: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`'${field}' must be a number.`);
+  }
+  return value;
+}
+
+function optionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") throw new Error(`'${field}' must be true or false.`);
+  return value;
+}
+
+function optionalEnum<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  field: string,
+): T | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !(allowed as readonly string[]).includes(value)) {
+    throw new Error(`'${field}' must be one of ${allowed.join(", ")}.`);
+  }
+  return value as T;
+}
+
+const BASELINE_OPTIONS: readonly BaselineOption[] = ["wild-type", "synonymous", "sequence"];
 
 const OUTPUT_ID = "the result-pool id of another block's output";
